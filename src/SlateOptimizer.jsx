@@ -61,9 +61,13 @@ const MAXB = {spark:BONUS, prairie:4*BONUS, contamination:8*BONUS, judgement:4*B
               banishment:BANISH_BONUS, pedigree:0, normal:0, corner:0, starlight:0};
 // Solver try-order: big coverage pieces first, specials after.
 const CAT_ORDER = ["pedigree","normal","corner","starlight","judgement","contamination","banishment","spark","prairie"];
-// Inventory display order.
-const REGULAR_ORDER = ["pedigree","normal","corner","starlight","spark","prairie"];
-const INV_ORDER = [...REGULAR_ORDER, ...NETHER];
+// Inventory columns.
+const INV_COLUMNS = [
+  {title:"SLATES",                 note:null,                                                       cats:["normal","starlight","corner"]},
+  {title:"LEGENDARY SLATES",       note:null,                                                       cats:["pedigree","spark","prairie"]},
+  {title:"NETHER KING'S DIVINITY", note:"Only one variant can be owned — selecting one clears the others.", cats:NETHER},
+];
+const INV_ORDER = INV_COLUMNS.flatMap(col=>col.cats);
 
 /* ───── Orientation helpers (cells + gaps rotate/flip together) ───── */
 const cmp = (a,b)=>a[0]-b[0]||a[1]-b[1];
@@ -421,26 +425,23 @@ export default function SlateOptimizer(){
         SLATE OPTIMIZER
       </h1>
 
-      {/* ── Piece inventory ── */}
-      <div style={{display:"flex", flexWrap:"wrap", gap:8, justifyContent:"center", maxWidth:720}}>
-        {REGULAR_ORDER.map(cat=>renderCard(cat, counts, setCount))}
-      </div>
-
-      {/* ── Nether King's Divinity section ── */}
-      <div style={{
-        display:"flex", flexDirection:"column", gap:8, alignItems:"center",
-        padding:"10px 14px 12px", maxWidth:720, boxSizing:"border-box",
-        background:"#12101d", border:"1px solid #4c3a6e", borderRadius:10,
-      }}>
-        <div style={{fontSize:12, fontWeight:700, color:"#b8a5e0", letterSpacing:"0.08em"}}>
-          NETHER KING'S DIVINITY
-        </div>
-        <div style={{fontSize:10, color:"#6b5f8a"}}>
-          Only one variant can be owned — selecting one clears the others.
-        </div>
-        <div style={{display:"flex", flexWrap:"wrap", gap:8, justifyContent:"center"}}>
-          {NETHER.map(cat=>renderCard(cat, counts, setCount))}
-        </div>
+      {/* ── Piece inventory: three columns ── */}
+      <div style={{display:"flex", flexWrap:"wrap", gap:10, justifyContent:"center", alignItems:"stretch"}}>
+        {INV_COLUMNS.map(col=>(
+          <div key={col.title} style={{
+            display:"flex", flexDirection:"column", gap:8, alignItems:"center",
+            padding:"10px 12px 12px", boxSizing:"border-box",
+            background:col.cats===NETHER?"#12101d":"#101720",
+            border:`1px solid ${col.cats===NETHER?"#4c3a6e":"#243447"}`, borderRadius:10,
+          }}>
+            <div style={{fontSize:12, fontWeight:700, letterSpacing:"0.08em",
+              color:col.cats===NETHER?"#b8a5e0":"#7d93ab"}}>
+              {col.title}
+            </div>
+            {col.note && <div style={{fontSize:10, color:"#6b5f8a", maxWidth:300, textAlign:"center"}}>{col.note}</div>}
+            {col.cats.map(cat=>renderCard(cat, counts, setCount))}
+          </div>
+        ))}
       </div>
 
       {/* ── Stats + Solve ── */}

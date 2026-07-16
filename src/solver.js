@@ -48,11 +48,11 @@ export const PIECE_LABELS = {
 };
 export const PIECE_DESC = {
   pedigree:"Cannot be copied from",
-  spark:"Copies the last talent of one adjacent slate",
-  prairie:"Copies all talents on adjacent slates",
-  judgement:"Buffs slates on the lines between its cells",
-  contamination:"Projects its talents into each adjacent slate",
-  banishment:"Buff at 4+ adjacent and 4+ non-adjacent slates",
+  spark:"Copies the last talent of one adjacent slate (+1 mod)",
+  prairie:"Copies the last talent of each adjacent slate (+1 each, max 4)",
+  judgement:"Buffs slates on its lines — value comes from its talent nodes (⚙)",
+  contamination:"Projects 1.3 mods into each touching slate, scaled by its nodes (⚙)",
+  banishment:"Buff at 4+ adj & 4+ non-adj: +1 mod per non-adjacent slate",
 };
 
 /* ───── Nether King modifiers (Ultimate Nether King Talent Nodes) ───── */
@@ -78,11 +78,11 @@ export const EMPTY_MODS = Object.fromEntries(
    Each slate type carries an intrinsic mod count; synergies add mods on top.
    Coverage is only a tie-breaker (COVER_EPS per covered cell), so a slate is
    always worth placing but never at the cost of a single mod. */
-export const SPARK_COPY_VALUE = 1;  // Spark copies the LAST talent = 1 mod
-export const CONTAM_BASE = 2;       // mods Contamination projects into each target
-export const JUDGE_PCT = 0.5;       // base effect increase for slates on Judgement's lines
-export const BANISH_VALUE = 5;      // flat value of Banishment's buff
-export const COVER_EPS = 0.01;      // per-cell tie-breaker
+export const SPARK_COPY_VALUE = 1;    // Spark copies the LAST talent = 1 mod
+export const PRAIRIE_COPY_VALUE = 1;  // Prairie copies the LAST talent of each adjacent slate (max 4)
+export const CONTAM_BASE = 1.3;       // mods Contamination projects into each touching slate
+export const STATUE_ADD = CONTAM_BASE*0.30; // extra per target when the Statue node is on AND the board has an empty slot
+export const COVER_EPS = 0.01;        // per-cell tie-breaker
 // Intrinsic mod counts (pedigree's is user-adjustable at runtime, 0–3:
 // its mods are impactful but unscalable, so "require it" is the usual want).
 export const DEFAULT_PEDIGREE_VALUE = 0;
@@ -102,12 +102,13 @@ export const CAT_ORDER = ["pedigree","normal","corner","starlight","judgement","
 /* Per-slate-type value of one Contamination projection, given active modifiers.
    Non-legendary = Normal Slate (Starlight/Corner count as legendary). */
 export function contamValueTable(mods){
+  // Statue node is NOT in this table — it's conditional on the final board
+  // having an empty slot, so the solver adds it at evaluation time.
   const t = {};
   for(const cat of CAT_ORDER){
     if(!CAN_BE_BUFFED[cat]){ t[cat] = 0; continue; }
     let m = 1;
     if(mods.c_all12)  m += 0.12;
-    if(mods.c_statue) m += 0.30;
     if(cat==="pedigree"  && mods.c_pedigree)  m += 1.0;
     if(cat==="starlight" && mods.c_starlight) m += 0.5;
     if(cat==="corner"    && mods.c_corner)    m += 0.3;
@@ -116,13 +117,14 @@ export function contamValueTable(mods){
   }
   return t;
 }
-/* Per-slate-type value of sitting on Judgement's lines: a share of the buffed
-   slate's own mods, so Judgement prefers amplifying mod-rich slates. */
+/* Per-slate-type value of sitting on Judgement's lines. Judgement has NO base
+   buff — only its picked talent nodes grant value: buffed slate's weight × node %.
+   e.g. Normal on a line with the +20% node = 5 × 0.20 = +1 mod. */
 export function judgeValueTable(mods, modVal){
   const t = {};
   for(const cat of CAT_ORDER){
     if(!CAN_BE_BUFFED[cat]){ t[cat] = 0; continue; }
-    let pct = JUDGE_PCT;
+    let pct = 0;
     if((cat==="corner"||cat==="starlight") && mods.j_cs) pct += 0.25;
     if(cat==="normal" && mods.j_nonleg) pct += 0.20;
     t[cat] = modVal[cat]*pct;
@@ -224,10 +226,14 @@ export function solve(counts, mods, pedigreeVal = DEFAULT_PEDIGREE_VALUE, requir
   const contamVal = contamValueTable(mods);
   const judgeVal = judgeValueTable(mods, modVal);
   const CDIRS = mods.c_diag ? DIRS8 : DIRS; // Contamination effect-area reach
-  const maxCopyVal = Math.max(...CAT_ORDER.filter(c=>CAN_COPY_FROM[c]).map(c=>modVal[c]));
+  const contamMaxTargets = mods.c_diag ? 12 : 8;
+  const otherPieceCount = CAT_ORDER.reduce((s,c)=>s+(c==="banishment"?0:(counts[c]||0)), 0);
   const MAXB = {
-    spark:SPARK_COPY_VALUE, prairie:4*maxCopyVal, banishment:BANISH_VALUE,
-    contamination:(mods.c_diag?12:8)*Math.max(...Object.values(contamVal)),
+    spark:SPARK_COPY_VALUE,
+    prairie:4*PRAIRIE_COPY_VALUE,
+    // Banishment is worth 1 per non-adjacent slate — at most every other piece.
+    banishment:otherPieceCount,
+    contamination:contamMaxTargets*(Math.max(...Object.values(contamVal)) + (mods.c_statue?STATUE_ADD:0)),
     judgement:4*Math.max(...Object.values(judgeVal)),
     pedigree:0, normal:0, corner:0, starlight:0,
   };
@@ -242,6 +248,7 @@ export function solve(counts, mods, pedigreeVal = DEFAULT_PEDIGREE_VALUE, requir
   const placed = [], sparkSat = [];
   let banishIdx = -1, banishAdj = 0, banishNon = 0, judgeIdx = -1;
   let contamIdx = -1, contamEff = null; // effect-area cell set of placed Contamination
+  let contamTargets = 0; // distinct projection targets of placed Contamination
   let best = {score:0, sol:[], coverage:0, bonus:0, intrinsic:0};
   let iters = 0, capped = false;
   const t0 = performance.now();
@@ -268,14 +275,21 @@ export function solve(counts, mods, pedigreeVal = DEFAULT_PEDIGREE_VALUE, requir
       if(onProgress && iters%2_097_152===0) onProgress(iters, best);
     }
 
-    const score = intrinsic + bonus + COVER_EPS*coverage;
+    // Evaluation-time extras that depend on the whole-board state:
+    // Banishment = 1 mod per non-adjacent slate (only when its 4+/4+ buff holds);
+    // Statue node = +0.39 per Contamination target, only if the board has an empty slot.
+    let extra = 0;
+    if(banishIdx>=0) extra += banishNon;
+    if(contamIdx>=0 && mods.c_statue && coverage<TOTAL) extra += STATUE_ADD*contamTargets;
+    const score = intrinsic + bonus + extra + COVER_EPS*coverage;
     const banishOk = banishIdx<0 || (banishAdj>=4 && banishNon>=4);
     const pedigreeOk = !pedigreeNeed || pedigreePlaced>0;
     if(banishOk && pedigreeOk && score>best.score){
-      best = {score, sol:placed.map(p=>({cat:p.cat, cells:p.cells, gaps:p.gaps})), coverage, bonus, intrinsic};
+      best = {score, sol:placed.map(p=>({cat:p.cat, cells:p.cells, gaps:p.gaps})), coverage, bonus:bonus+extra, intrinsic};
     }
     // Prune: even placing every remaining piece and hitting every remaining bonus can't beat best.
-    if(score + remValue() + potential <= best.score)return;
+    // (`potential` never shrinks for the evaluation-time extras, so it bounds them too.)
+    if(intrinsic + bonus + COVER_EPS*coverage + remValue() + potential <= best.score)return;
 
     let tr = -1, tc = -1;
     for(const [r,c] of VALID) if(occ[r*COLS+c]===0){ tr=r; tc=c; break; }
@@ -313,8 +327,8 @@ export function solve(counts, mods, pedigreeVal = DEFAULT_PEDIGREE_VALUE, requir
           if(cat==="spark"){
             for(const j of nbrs) if(CAN_COPY_FROM[placed[j].cat]){ d += SPARK_COPY_VALUE; sparkSat[id] = true; break; }
           }else if(cat==="prairie"){
-            // Prairie copies ALL talents of each adjacent copyable slate.
-            for(const j of nbrs) if(CAN_COPY_FROM[placed[j].cat]) d += modVal[placed[j].cat];
+            // Prairie copies the LAST talent of each adjacent copyable slate (1 mod each).
+            for(const j of nbrs) if(CAN_COPY_FROM[placed[j].cat]) d += PRAIRIE_COPY_VALUE;
           }else if(cat==="contamination"){
             contamIdx = id;
             const eff = new Set();
@@ -325,7 +339,7 @@ export function solve(counts, mods, pedigreeVal = DEFAULT_PEDIGREE_VALUE, requir
             contamEff = eff;
             const targets = new Set();
             for(const idx of eff){ const p = pid[idx]; if(p>=0 && p!==id) targets.add(p); }
-            for(const j of targets) d += contamVal[placed[j].cat];
+            for(const j of targets) if(contamVal[placed[j].cat]>0){ d += contamVal[placed[j].cat]; contamTargets++; }
           }else if(cat==="judgement"){
             judgeIdx = id;
             // One buff per distinct buffable slate on the lines, not per covered cell.
@@ -336,17 +350,20 @@ export function solve(counts, mods, pedigreeVal = DEFAULT_PEDIGREE_VALUE, requir
             }
           }else if(cat==="banishment"){
             banishIdx = id; banishAdj = nbrs.size; banishNon = id - nbrs.size;
-            d += BANISH_VALUE;
+            // Value (1 per non-adjacent slate) is computed at evaluation time.
           }
           // Synergy granted to already-placed specials
           for(const j of nbrs){
             const jc = placed[j].cat;
             if(jc==="spark" && !sparkSat[j] && CAN_COPY_FROM[cat]){ sparkSat[j] = true; satUndo.push(j); d += SPARK_COPY_VALUE; }
-            else if(jc==="prairie" && CAN_COPY_FROM[cat]) d += modVal[cat];
+            else if(jc==="prairie" && CAN_COPY_FROM[cat]) d += PRAIRIE_COPY_VALUE;
           }
+          let contamHit = false;
           if(contamIdx>=0 && contamIdx!==id && contamVal[cat]>0){
             // New piece in Contamination's effect area = one projection target.
-            for(const [r,c] of pl.cells) if(contamEff.has(r*COLS+c)){ d += contamVal[cat]; break; }
+            for(const [r,c] of pl.cells) if(contamEff.has(r*COLS+c)){
+              d += contamVal[cat]; contamTargets++; contamHit = true; break;
+            }
           }
           if(judgeIdx>=0 && judgeIdx!==id && judgeVal[cat]>0){
             // New piece on the lines = one buffed slate, however many cells it covers.
@@ -367,9 +384,10 @@ export function solve(counts, mods, pedigreeVal = DEFAULT_PEDIGREE_VALUE, requir
           bonus -= d; potential += d; intrinsic -= modVal[cat];
           if(cat==="pedigree") pedigreePlaced--;
           if(banishDelta==="adj")banishAdj--; else if(banishDelta==="non")banishNon--;
+          if(contamHit) contamTargets--;
           for(const j of satUndo) sparkSat[j] = false;
           if(cat==="judgement") judgeIdx = -1;
-          if(cat==="contamination"){ contamIdx = -1; contamEff = null; }
+          if(cat==="contamination"){ contamIdx = -1; contamEff = null; contamTargets = 0; }
           if(cat==="banishment"){ banishIdx = -1; banishAdj = 0; banishNon = 0; }
           rem[cat]++; coverage -= pl.cells.length; emptyCells += pl.cells.length;
           placed.pop(); sparkSat.pop();
@@ -427,21 +445,25 @@ export function analyzeSolution(sol, mods, pedigreeVal = DEFAULT_PEDIGREE_VALUE)
           : "Sparks of Moth Fire has no copyable neighbor"});
     }else if(p.cat==="prairie"){
       const copyable = nbrs.filter(j=>CAN_COPY_FROM[sol[j].cat]);
-      const val = copyable.reduce((s,j)=>s+modVal[sol[j].cat], 0);
-      pieceNotes[i] = `Copies ${copyable.length} adjacent slate${copyable.length===1?"":"s"} (+${fmt(val)} mods)`;
+      const val = copyable.length*PRAIRIE_COPY_VALUE;
+      pieceNotes[i] = `Copies the last talent of ${copyable.length} adjacent slate${copyable.length===1?"":"s"} (+${fmt(val)} mods)`;
       items.push({ok:copyable.length>0, cat:p.cat,
-        text: `Prairie Ablaze copies ${copyable.length} adjacent slate${copyable.length===1?"":"s"}`
+        text: `Prairie Ablaze copies the last talent of ${copyable.length} adjacent slate${copyable.length===1?"":"s"}`
           + (copyable.length ? ` (+${fmt(val)} mods: ${copyable.map(j=>PIECE_LABELS[sol[j].cat]).join(", ")})` : "")});
     }else if(p.cat==="contamination"){
       const reach = mods.c_diag ? DIRS8 : DIRS;
       const targets = [...neighborIds(p.cells, i, reach)].filter(j=>contamVal[sol[j].cat]>0);
       targets.forEach(j=>addTag(j, "Receives Contamination's talents"));
-      const val = targets.reduce((s,j)=>s+contamVal[sol[j].cat], 0);
+      const covered = sol.reduce((s,q)=>s+q.cells.length, 0);
+      const statueActive = mods.c_statue && covered<TOTAL;
+      const val = targets.reduce((s,j)=>s+contamVal[sol[j].cat], 0)
+        + (statueActive ? STATUE_ADD*targets.length : 0);
       pieceNotes[i] = `Projects into ${targets.length} slate${targets.length===1?"":"s"} (+${fmt(val)} mods)`;
       items.push({ok:targets.length>0, cat:p.cat,
         text: `Contamination projects into ${targets.length} slate${targets.length===1?"":"s"}`
           + (targets.length ? ` (+${fmt(val)} mods)` : "")
-          + (mods.c_diag ? " · diagonal reach" : "")});
+          + (mods.c_diag ? " · diagonal reach" : "")
+          + (mods.c_statue ? (statueActive ? " · Statue bonus active (empty slot)" : " · Statue bonus inactive (board full)") : "")});
     }else if(p.cat==="judgement"){
       const gaps = p.gaps || [];
       const buffedPieces = new Set();
@@ -452,16 +474,20 @@ export function analyzeSolution(sol, mods, pedigreeVal = DEFAULT_PEDIGREE_VALUE)
       });
       buffedPieces.forEach(j=>addTag(j, "Buffed by Judgement"));
       const val = [...buffedPieces].reduce((s,j)=>s+judgeVal[sol[j].cat], 0);
-      pieceNotes[i] = `Buffs ${buffedPieces.size} slate${buffedPieces.size===1?"":"s"} on its lines (+${fmt(val)} mods)`;
+      const noNodes = !mods.j_cs && !mods.j_nonleg;
+      pieceNotes[i] = noNodes ? "No talent nodes selected — no buff value"
+        : `Buffs ${buffedPieces.size} slate${buffedPieces.size===1?"":"s"} on its lines (+${fmt(val)} mods)`;
       items.push({ok:buffedPieces.size>0, cat:p.cat,
-        text: `Judgement buffs ${buffedPieces.size} slate${buffedPieces.size===1?"":"s"} on its lines`
-          + (buffedPieces.size ? ` (+${fmt(val)} mods: ${[...buffedPieces].map(j=>PIECE_LABELS[sol[j].cat]).join(", ")})` : "")});
+        text: noNodes
+          ? "Judgement has no talent nodes selected (⚙) — its lines add no value"
+          : `Judgement buffs ${buffedPieces.size} slate${buffedPieces.size===1?"":"s"} on its lines`
+            + (buffedPieces.size ? ` (+${fmt(val)} mods: ${[...buffedPieces].map(j=>PIECE_LABELS[sol[j].cat]).join(", ")})` : "")});
     }else if(p.cat==="banishment"){
       const adj = nbrs.length, non = sol.length - 1 - adj;
       const ok = adj>=4 && non>=4;
-      pieceNotes[i] = ok ? `Buff active (${adj} adjacent / ${non} non-adjacent, +${BANISH_VALUE} mods)` : `${adj} adjacent / ${non} non-adjacent`;
+      pieceNotes[i] = ok ? `Buff active: +${non} mods (1 per non-adjacent slate; ${adj} adjacent)` : `${adj} adjacent / ${non} non-adjacent — buff inactive`;
       items.push({ok, cat:p.cat,
-        text: `Banishment: ${adj} adjacent / ${non} non-adjacent slates${ok?` — buff active (+${BANISH_VALUE} mods)`:""}`});
+        text: `Banishment: ${adj} adjacent / ${non} non-adjacent slates${ok?` — buff active (+${non} mods, 1 per non-adjacent)`:""}`});
     }
   });
   return {items, gapAll, gapCovered, pieceNotes, pieceTags};

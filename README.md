@@ -16,10 +16,10 @@ but never at the cost of a mod:
 | Corner of Divinity | 2 mods |
 | Pedigree of the Gods | Adjustable 0–3 (default 0) — its 1–2 mods are highly impactful but unscalable, so use the **Require** toggle on its card to force it into the layout instead of inflating its score. Cannot be copied *from* |
 | Sparks of Moth Fire | +1 mod (copies the last talent of one adjacent slate). Can never be placed adjacent to Prairie Ablaze; copiers can't copy other copiers |
-| Prairie Ablaze | + the full mod value of each distinct adjacent copyable slate (up to 4 neighbors, so up to +20 next to Normals). Can never be placed adjacent to Sparks |
-| Nether King's Divinity: Judgement | Buffs each distinct slate on its lines (✦) for 50% of that slate's own mods (talent nodes add +25%/+20% for matching types) |
-| Nether King's Divinity: Contamination | Projects 2 mods into each slate in its effect area, scaled by its talent nodes; one node extends reach to diagonals |
-| Nether King's Divinity: Banishment | +5 mods; **hard constraint** — when placed, the solution must have at least 4 adjacent and at least 4 non-adjacent other slates |
+| Prairie Ablaze | +1 mod per distinct adjacent copyable slate (copies each one's *last* talent; max 4). Can never be placed adjacent to Sparks |
+| Nether King's Divinity: Judgement | No base buff — its picked talent nodes grant buffed-slate-weight × node % per distinct slate on its lines (✦). E.g. Normal on a line with the +20% node = 5 × 0.20 = +1 |
+| Nether King's Divinity: Contamination | Projects 1.3 mods into each slate in its effect area, multiplied by its talent nodes (+100% Pedigree → 2.6, etc.). The Statue node's +30% only counts if the final board has an empty slot; one node extends reach to diagonals |
+| Nether King's Divinity: Banishment | +1 mod per **non-adjacent** slate; **hard constraint** — when placed, the solution must have at least 4 adjacent and at least 4 non-adjacent other slates |
 
 Only one Nether King's Divinity variant can be owned at a time.
 

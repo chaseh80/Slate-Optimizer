@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useRef } from "react";
 import {
   ROWS, COLS, VALID, VALID_SET, TOTAL,
   PIECE_SIZE, PIECE_MAX, NETHER, COLORS, PIECE_LABELS, PIECE_DESC,
-  NETHER_MODS, EMPTY_MODS, DEFAULT_PEDIGREE_VALUE, modValueTable, analyzeSolution,
+  NETHER_MODS, EMPTY_MODS, DEFAULT_PEDIGREE_VALUE, MAX_PEDIGREE_VALUE, modValueTable, analyzeSolution,
 } from "./solver.js";
 
 /* ───── Inventory columns ───── */
@@ -45,6 +45,7 @@ export default function SlateOptimizer(){
   const [counts, setCounts] = useState({...EMPTY_COUNTS});
   const [mods, setMods] = useState({...EMPTY_MODS});
   const [pedigreeVal, setPedigreeVal] = useState(DEFAULT_PEDIGREE_VALUE);
+  const [requirePedigree, setRequirePedigree] = useState(false);
   const [modOpen, setModOpen] = useState(null); // which nether cat's modifier panel is open
   const [budgetIdx, setBudgetIdx] = useState(2); // default 25M states
   const [solving, setSolving] = useState(false);
@@ -60,7 +61,17 @@ export default function SlateOptimizer(){
   },[]);
 
   const changePedigreeVal = useCallback((v)=>{
-    setPedigreeVal(Math.max(1, Math.min(15, v)));
+    setPedigreeVal(Math.max(0, Math.min(MAX_PEDIGREE_VALUE, v)));
+    setResult(null);
+  },[]);
+
+  const toggleRequirePedigree = useCallback(()=>{
+    setRequirePedigree(prev=>{
+      const next = !prev;
+      // Requiring pedigree implies owning one.
+      if(next) setCounts(p=>p.pedigree>0 ? p : {...p, pedigree:1});
+      return next;
+    });
     setResult(null);
   },[]);
 
@@ -74,6 +85,7 @@ export default function SlateOptimizer(){
       if(NETHER.includes(cat) && val>0) NETHER.filter(x=>x!==cat).forEach(x=>{ n[x]=0; });
       return n;
     });
+    if(cat==="pedigree" && val===0) setRequirePedigree(false);
     setResult(null);
   },[]);
 
@@ -92,8 +104,8 @@ export default function SlateOptimizer(){
         setResult(e.data.result); setSolving(false); setProgress(null);
       }
     };
-    w.postMessage({counts, mods, pedigreeVal, maxIters:BUDGETS[budgetIdx].v});
-  },[counts,mods,pedigreeVal,totalArea,solving,budgetIdx]);
+    w.postMessage({counts, mods, pedigreeVal, requirePedigree, maxIters:BUDGETS[budgetIdx].v});
+  },[counts,mods,pedigreeVal,requirePedigree,totalArea,solving,budgetIdx]);
 
   const handleCancel = useCallback(()=>{
     if(workerRef.current){ workerRef.current.terminate(); workerRef.current = null; }
@@ -177,7 +189,8 @@ export default function SlateOptimizer(){
               {col.title}
             </div>
             {col.note && <div style={{fontSize:10, color:"#6b5f8a", maxWidth:300, textAlign:"center"}}>{col.note}</div>}
-            {col.cats.map(cat=>renderCard(cat, counts, setCount, mods, setModOpen, pedigreeVal, changePedigreeVal))}
+            {col.cats.map(cat=>renderCard(cat, counts, setCount, mods, setModOpen,
+              {pedigreeVal, changePedigreeVal, requirePedigree, toggleRequirePedigree}))}
           </div>
         ))}
       </div>
@@ -390,7 +403,8 @@ export default function SlateOptimizer(){
   );
 }
 
-function renderCard(cat, counts, setCount, mods, openMods, pedigreeVal, changePedigreeVal){
+function renderCard(cat, counts, setCount, mods, openMods, pedigree){
+  const {pedigreeVal, changePedigreeVal, requirePedigree, toggleRequirePedigree} = pedigree;
   // Inside the Nether section the header already says "Nether King's Divinity".
   const label = NETHER.includes(cat) ? PIECE_LABELS[cat].split(": ")[1] : PIECE_LABELS[cat];
   const modList = NETHER_MODS[cat];
@@ -412,11 +426,20 @@ function renderCard(cat, counts, setCount, mods, openMods, pedigreeVal, changePe
           {PIECE_DESC[cat] ? ` · ${PIECE_DESC[cat]}` : ""}
         </div>
         {cat==="pedigree" && (
-          <div style={{display:"flex", alignItems:"center", gap:6, marginTop:4}}>
+          <div style={{display:"flex", alignItems:"center", gap:6, marginTop:4, flexWrap:"wrap"}}>
             <span style={{fontSize:10, color:"#64748b"}}>Mod value:</span>
-            <Btn small onClick={()=>changePedigreeVal(pedigreeVal-1)} disabled={pedigreeVal<=1}>−</Btn>
+            <Btn small onClick={()=>changePedigreeVal(pedigreeVal-1)} disabled={pedigreeVal<=0}>−</Btn>
             <span style={{fontSize:12, fontWeight:700, color:"#c084fc", minWidth:16, textAlign:"center"}}>{pedigreeVal}</span>
-            <Btn small onClick={()=>changePedigreeVal(pedigreeVal+1)} disabled={pedigreeVal>=15}>+</Btn>
+            <Btn small onClick={()=>changePedigreeVal(pedigreeVal+1)} disabled={pedigreeVal>=MAX_PEDIGREE_VALUE}>+</Btn>
+            <button onClick={toggleRequirePedigree} style={{
+              padding:"4px 10px", fontSize:10, fontWeight:700, fontFamily:"inherit",
+              background:requirePedigree?"#3b2a5e":"#1e293b",
+              color:requirePedigree?"#c4a7f7":"#94a3b8",
+              border:`1px solid ${requirePedigree?"#7c3aed":"#334155"}`,
+              borderRadius:12, cursor:"pointer", lineHeight:1,
+            }}>
+              {requirePedigree?"✓ Required":"Require"}
+            </button>
           </div>
         )}
       </div>

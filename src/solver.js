@@ -83,8 +83,10 @@ export const CONTAM_BASE = 2;       // mods Contamination projects into each tar
 export const JUDGE_PCT = 0.5;       // base effect increase for slates on Judgement's lines
 export const BANISH_VALUE = 5;      // flat value of Banishment's buff
 export const COVER_EPS = 0.01;      // per-cell tie-breaker
-// Intrinsic mod counts (pedigree's is user-adjustable at runtime).
-export const DEFAULT_PEDIGREE_VALUE = 7;
+// Intrinsic mod counts (pedigree's is user-adjustable at runtime, 0–3:
+// its mods are impactful but unscalable, so "require it" is the usual want).
+export const DEFAULT_PEDIGREE_VALUE = 0;
+export const MAX_PEDIGREE_VALUE = 3;
 export function modValueTable(pedigreeVal){
   return {pedigree:pedigreeVal, normal:5, starlight:2, corner:2,
           spark:0, prairie:0, judgement:0, contamination:0, banishment:0};
@@ -213,7 +215,7 @@ export const DIRS8 = [...DIRS,[1,1],[1,-1],[-1,1],[-1,-1]];
    Banishment, when placed, is a hard constraint: at least 4 adjacent and
    at least 4 non-adjacent other slates — solutions violating it are never recorded.
    Spark and Prairie may never be placed adjacent to each other. */
-export function solve(counts, mods, pedigreeVal = DEFAULT_PEDIGREE_VALUE, maxIters = 25_000_000, onProgress = null){
+export function solve(counts, mods, pedigreeVal = DEFAULT_PEDIGREE_VALUE, requirePedigree = false, maxIters = 25_000_000, onProgress = null){
   const occ = new Int8Array(ROWS*COLS).fill(-1); // -1 off-board, 0 empty, 1 filled, 2 skipped
   const pid = new Int16Array(ROWS*COLS).fill(-1);
   for(const [r,c] of VALID) occ[r*COLS+c] = 0;
@@ -229,6 +231,9 @@ export function solve(counts, mods, pedigreeVal = DEFAULT_PEDIGREE_VALUE, maxIte
     judgement:4*Math.max(...Object.values(judgeVal)),
     pedigree:0, normal:0, corner:0, starlight:0,
   };
+
+  const pedigreeNeed = requirePedigree && (counts.pedigree||0)>0;
+  let pedigreePlaced = 0;
 
   const rem = {...counts};
   let coverage = 0, bonus = 0, intrinsic = 0, emptyCells = TOTAL;
@@ -265,7 +270,8 @@ export function solve(counts, mods, pedigreeVal = DEFAULT_PEDIGREE_VALUE, maxIte
 
     const score = intrinsic + bonus + COVER_EPS*coverage;
     const banishOk = banishIdx<0 || (banishAdj>=4 && banishNon>=4);
-    if(banishOk && score>best.score){
+    const pedigreeOk = !pedigreeNeed || pedigreePlaced>0;
+    if(banishOk && pedigreeOk && score>best.score){
       best = {score, sol:placed.map(p=>({cat:p.cat, cells:p.cells, gaps:p.gaps})), coverage, bonus, intrinsic};
     }
     // Prune: even placing every remaining piece and hitting every remaining bonus can't beat best.
@@ -353,11 +359,13 @@ export function solve(counts, mods, pedigreeVal = DEFAULT_PEDIGREE_VALUE, maxIte
             else { banishNon++; banishDelta = "non"; }
           }
           bonus += d; potential -= d; intrinsic += modVal[cat];
+          if(cat==="pedigree") pedigreePlaced++;
 
           bt();
 
           /* ── unplace ── */
           bonus -= d; potential += d; intrinsic -= modVal[cat];
+          if(cat==="pedigree") pedigreePlaced--;
           if(banishDelta==="adj")banishAdj--; else if(banishDelta==="non")banishNon--;
           for(const j of satUndo) sparkSat[j] = false;
           if(cat==="judgement") judgeIdx = -1;

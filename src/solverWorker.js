@@ -1,8 +1,8 @@
 import { solve } from "./solver.js";
 
 self.onmessage = (e) => {
-  const { counts, mods, pedigreeVal, maxIters } = e.data;
-  const result = solve(counts, mods, pedigreeVal, maxIters, (iters, best) => {
+  const { counts, mods, pedigreeVal, requirePedigree, maxIters } = e.data;
+  const result = solve(counts, mods, pedigreeVal, requirePedigree, maxIters, (iters, best) => {
     self.postMessage({
       type: "progress",
       iters,

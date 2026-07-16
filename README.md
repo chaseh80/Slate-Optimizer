@@ -14,7 +14,7 @@ but never at the cost of a mod:
 | Normal Slate | 5 mods |
 | Fallen Starlight | 2 mods |
 | Corner of Divinity | 2 mods |
-| Pedigree of the Gods | Adjustable (default 7) — its strong unique mods are hard to quantify, so set it on the card. Cannot be copied *from* |
+| Pedigree of the Gods | Adjustable 0–3 (default 0) — its 1–2 mods are highly impactful but unscalable, so use the **Require** toggle on its card to force it into the layout instead of inflating its score. Cannot be copied *from* |
 | Sparks of Moth Fire | +1 mod (copies the last talent of one adjacent slate). Can never be placed adjacent to Prairie Ablaze; copiers can't copy other copiers |
 | Prairie Ablaze | + the full mod value of each distinct adjacent copyable slate (up to 4 neighbors, so up to +20 next to Normals). Can never be placed adjacent to Sparks |
 | Nether King's Divinity: Judgement | Buffs each distinct slate on its lines (✦) for 50% of that slate's own mods (talent nodes add +25%/+20% for matching types) |

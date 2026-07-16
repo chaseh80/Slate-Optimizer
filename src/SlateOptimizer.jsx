@@ -20,7 +20,7 @@ const BASE_SHAPES = {
   // The 4 gap cells between them are the "lines" that buff whatever covers them.
   judgement:     { cells: [[0,0],[0,3],[3,3]], gaps: [[0,1],[0,2],[1,3],[2,3]] },
   contamination: { cells: [[0,0],[0,1],[0,2]] },
-  banishment:    { cells: [[0,0],[1,1]] }, // two 1x1s stacked diagonally
+  banishment:    { cells: [[0,0],[1,1],[2,2]] }, // three 1x1s stacked diagonally
 };
 const NORMAL_BASES = [
   [[0,0],[0,1],[1,0],[1,1]],       // O
@@ -29,7 +29,7 @@ const NORMAL_BASES = [
   [[0,1],[1,1],[2,0],[2,1]],       // J
 ];
 
-const PIECE_SIZE = {pedigree:7,normal:4,corner:3,starlight:2,spark:1,prairie:1,judgement:3,contamination:3,banishment:2};
+const PIECE_SIZE = {pedigree:7,normal:4,corner:3,starlight:2,spark:1,prairie:1,judgement:3,contamination:3,banishment:3};
 const PIECE_MAX  = {pedigree:1,normal:6,corner:3,starlight:3,spark:3,prairie:1,judgement:1,contamination:1,banishment:1};
 const NETHER = ["judgement","contamination","banishment"]; // max 1 combined
 const COLORS = {
@@ -62,7 +62,8 @@ const MAXB = {spark:BONUS, prairie:4*BONUS, contamination:8*BONUS, judgement:4*B
 // Solver try-order: big coverage pieces first, specials after.
 const CAT_ORDER = ["pedigree","normal","corner","starlight","judgement","contamination","banishment","spark","prairie"];
 // Inventory display order.
-const INV_ORDER = ["pedigree","normal","corner","starlight","spark","prairie","judgement","contamination","banishment"];
+const REGULAR_ORDER = ["pedigree","normal","corner","starlight","spark","prairie"];
+const INV_ORDER = [...REGULAR_ORDER, ...NETHER];
 
 /* ───── Orientation helpers (cells + gaps rotate/flip together) ───── */
 const cmp = (a,b)=>a[0]-b[0]||a[1]-b[1];
@@ -231,7 +232,12 @@ function solve(counts){
             d += BONUS*nbrs.size;
           }else if(cat==="judgement"){
             judgeIdx = id;
-            for(const [gr,gc] of pl.gaps) if(occ[gr*COLS+gc]===1) d += BONUS;
+            // One buff per distinct slate on the lines, not per covered cell.
+            const buffed = new Set();
+            for(const [gr,gc] of pl.gaps){
+              const p = pid[gr*COLS+gc];
+              if(p>=0 && !buffed.has(p)){ buffed.add(p); d += BONUS; }
+            }
           }else if(cat==="banishment"){
             banishIdx = id; banishAdj = nbrs.size; banishNon = id - nbrs.size;
             d += BANISH_BONUS;
@@ -244,8 +250,9 @@ function solve(counts){
             else if(jc==="contamination") d += BONUS;
           }
           if(judgeIdx>=0 && judgeIdx!==id){
+            // New piece on the lines = one buffed slate, however many cells it covers.
             const gs = placed[judgeIdx].gapSet;
-            for(const [r,c] of pl.cells) if(gs.has(r*COLS+c)) d += BONUS;
+            for(const [r,c] of pl.cells) if(gs.has(r*COLS+c)){ d += BONUS; break; }
           }
           let banishDelta = null;
           if(banishIdx>=0 && banishIdx!==id){
@@ -316,11 +323,15 @@ function analyzeSolution(sol){
         text: `Contamination projects into ${nbrs.length} adjacent slate${nbrs.length===1?"":"s"}`});
     }else if(p.cat==="judgement"){
       const gaps = p.gaps || [];
-      const covered = gaps.filter(([r,c])=>pid[`${r},${c}`]!==undefined);
-      gaps.forEach(([r,c])=>gapAll.add(`${r},${c}`));
-      covered.forEach(([r,c])=>gapCovered.add(`${r},${c}`));
-      items.push({ok:covered.length>0, cat:p.cat,
-        text: `Judgement buffs ${covered.length}/${gaps.length} cells on its lines`});
+      const buffedPieces = new Set();
+      gaps.forEach(([r,c])=>{
+        gapAll.add(`${r},${c}`);
+        const j = pid[`${r},${c}`];
+        if(j!==undefined){ buffedPieces.add(j); gapCovered.add(`${r},${c}`); }
+      });
+      items.push({ok:buffedPieces.size>0, cat:p.cat,
+        text: `Judgement buffs ${buffedPieces.size} slate${buffedPieces.size===1?"":"s"} on its lines`
+          + (buffedPieces.size ? ` (${[...buffedPieces].map(j=>PIECE_LABELS[sol[j].cat]).join(", ")})` : "")});
     }else if(p.cat==="banishment"){
       const adj = nbrs.length, non = sol.length - 1 - adj;
       const ok = adj===4 && non===4;
@@ -412,33 +423,24 @@ export default function SlateOptimizer(){
 
       {/* ── Piece inventory ── */}
       <div style={{display:"flex", flexWrap:"wrap", gap:8, justifyContent:"center", maxWidth:720}}>
-        {INV_ORDER.map(cat=>(
-          <div key={cat} style={{
-            display:"flex", alignItems:"center", gap:8,
-            padding:"8px 12px", background:"#141c27",
-            border:`1px solid ${COLORS[cat]}44`, borderRadius:8, width:320,
-            boxSizing:"border-box",
-          }}>
-            <div style={{width:12, height:12, borderRadius:3, background:COLORS[cat], flexShrink:0}}/>
-            <div style={{flex:1, minWidth:0}}>
-              <div style={{fontSize:11, color:"#94a3b8"}}>{PIECE_LABELS[cat]}</div>
-              <div style={{fontSize:10, color:"#475569"}}>
-                {PIECE_SIZE[cat]} cell{PIECE_SIZE[cat]===1?"":"s"} · max {PIECE_MAX[cat]}
-                {PIECE_DESC[cat] ? ` · ${PIECE_DESC[cat]}` : ""}
-              </div>
-            </div>
-            <div style={{display:"flex", alignItems:"center", gap:4}}>
-              <Btn small onClick={()=>setCount(cat,counts[cat]-1)} disabled={counts[cat]<=0}>−</Btn>
-              <span style={{fontSize:16, fontWeight:700, color:"#e2e8f0", minWidth:20, textAlign:"center"}}>
-                {counts[cat]}
-              </span>
-              <Btn small onClick={()=>setCount(cat,counts[cat]+1)} disabled={counts[cat]>=PIECE_MAX[cat]}>+</Btn>
-            </div>
-          </div>
-        ))}
+        {REGULAR_ORDER.map(cat=>renderCard(cat, counts, setCount))}
       </div>
-      <div style={{fontSize:10, color:"#475569"}}>
-        Only one Nether King's Divinity variant can be owned — selecting one clears the others.
+
+      {/* ── Nether King's Divinity section ── */}
+      <div style={{
+        display:"flex", flexDirection:"column", gap:8, alignItems:"center",
+        padding:"10px 14px 12px", maxWidth:720, boxSizing:"border-box",
+        background:"#12101d", border:"1px solid #4c3a6e", borderRadius:10,
+      }}>
+        <div style={{fontSize:12, fontWeight:700, color:"#b8a5e0", letterSpacing:"0.08em"}}>
+          NETHER KING'S DIVINITY
+        </div>
+        <div style={{fontSize:10, color:"#6b5f8a"}}>
+          Only one variant can be owned — selecting one clears the others.
+        </div>
+        <div style={{display:"flex", flexWrap:"wrap", gap:8, justifyContent:"center"}}>
+          {NETHER.map(cat=>renderCard(cat, counts, setCount))}
+        </div>
       </div>
 
       {/* ── Stats + Solve ── */}
@@ -556,6 +558,35 @@ export default function SlateOptimizer(){
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function renderCard(cat, counts, setCount){
+  // Inside the Nether section the header already says "Nether King's Divinity".
+  const label = NETHER.includes(cat) ? PIECE_LABELS[cat].split(": ")[1] : PIECE_LABELS[cat];
+  return(
+    <div key={cat} style={{
+      display:"flex", alignItems:"center", gap:8,
+      padding:"8px 12px", background:"#141c27",
+      border:`1px solid ${COLORS[cat]}44`, borderRadius:8, width:320,
+      boxSizing:"border-box",
+    }}>
+      <div style={{width:12, height:12, borderRadius:3, background:COLORS[cat], flexShrink:0}}/>
+      <div style={{flex:1, minWidth:0}}>
+        <div style={{fontSize:11, color:"#94a3b8"}}>{label}</div>
+        <div style={{fontSize:10, color:"#475569"}}>
+          {PIECE_SIZE[cat]} cell{PIECE_SIZE[cat]===1?"":"s"} · max {PIECE_MAX[cat]}
+          {PIECE_DESC[cat] ? ` · ${PIECE_DESC[cat]}` : ""}
+        </div>
+      </div>
+      <div style={{display:"flex", alignItems:"center", gap:4}}>
+        <Btn small onClick={()=>setCount(cat,counts[cat]-1)} disabled={counts[cat]<=0}>−</Btn>
+        <span style={{fontSize:16, fontWeight:700, color:"#e2e8f0", minWidth:20, textAlign:"center"}}>
+          {counts[cat]}
+        </span>
+        <Btn small onClick={()=>setCount(cat,counts[cat]+1)} disabled={counts[cat]>=PIECE_MAX[cat]}>+</Btn>
+      </div>
     </div>
   );
 }

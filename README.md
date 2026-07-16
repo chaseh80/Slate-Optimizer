@@ -11,9 +11,9 @@ Bonuses dominate raw coverage — a copy/projection is worth 10 points vs. 1 poi
 |---|---|
 | Sparks of Moth Fire | Copies the last talent of one adjacent slate (+10 if it has a copyable neighbor) |
 | Prairie Ablaze | Copies all talents on adjacent slates (+10 per distinct adjacent slate) |
-| Nether King's Divinity: Judgement | L of three 1×1s; +10 per slate cell on the lines between them (marked ✦) |
+| Nether King's Divinity: Judgement | L of three 1×1s; +10 per distinct slate on the lines between them (marked ✦, max 4) |
 | Nether King's Divinity: Contamination | 3×1; projects its talents into each adjacent slate (+10 each) |
-| Nether King's Divinity: Banishment | Diagonal pair; **hard constraint** — when placed, the solution must have exactly 4 adjacent and 4 non-adjacent other slates (+30) |
+| Nether King's Divinity: Banishment | Three 1×1s connected diagonally; **hard constraint** — when placed, the solution must have exactly 4 adjacent and 4 non-adjacent other slates (+30) |
 | Pedigree of the Gods | Cannot be copied *from* — Spark/Prairie ignore it |
 
 Only one Nether King's Divinity variant can be owned at a time.

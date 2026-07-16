@@ -3,7 +3,8 @@
     "allow": [
       "PowerShell(node --version)",
       "PowerShell(npm --version)",
-      "PowerShell(npm install)"
+      "PowerShell(npm install)",
+      "WebFetch(domain:api.github.com)"
     ]
   }
 }

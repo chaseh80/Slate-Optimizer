@@ -55,8 +55,12 @@ const PIECE_DESC = {
 
 /* ───── Scoring ─────
    Bonuses dominate: one copy/projection outweighs several covered cells. */
-const BONUS = 10;          // per copy / projection / buffed line cell
+const BONUS = 10;          // per copy / projection / buffed slate
 const BANISH_BONUS = 30;   // banishment buff (only counted when 4+4 holds)
+// Pedigree and Nether King slates can't be copied from; buffing slates
+// (Spark, Prairie) can't be buffed by Nether King slates either.
+const CAN_COPY_FROM = {pedigree:false,normal:true,corner:true,starlight:true,spark:true,prairie:true,judgement:false,contamination:false,banishment:false};
+const CAN_BE_BUFFED = {pedigree:true,normal:true,corner:true,starlight:true,spark:false,prairie:false,judgement:true,contamination:true,banishment:true};
 const MAXB = {spark:BONUS, prairie:4*BONUS, contamination:8*BONUS, judgement:4*BONUS,
               banishment:BANISH_BONUS, pedigree:0, normal:0, corner:0, starlight:0};
 // Solver try-order: big coverage pieces first, specials after.
@@ -229,18 +233,18 @@ function solve(counts){
           const satUndo = [];
           // Own synergy at placement time
           if(cat==="spark"){
-            for(const j of nbrs) if(placed[j].cat!=="pedigree"){ d += BONUS; sparkSat[id] = true; break; }
+            for(const j of nbrs) if(CAN_COPY_FROM[placed[j].cat]){ d += BONUS; sparkSat[id] = true; break; }
           }else if(cat==="prairie"){
-            for(const j of nbrs) if(placed[j].cat!=="pedigree") d += BONUS;
+            for(const j of nbrs) if(CAN_COPY_FROM[placed[j].cat]) d += BONUS;
           }else if(cat==="contamination"){
-            d += BONUS*nbrs.size;
+            for(const j of nbrs) if(CAN_BE_BUFFED[placed[j].cat]) d += BONUS;
           }else if(cat==="judgement"){
             judgeIdx = id;
-            // One buff per distinct slate on the lines, not per covered cell.
+            // One buff per distinct buffable slate on the lines, not per covered cell.
             const buffed = new Set();
             for(const [gr,gc] of pl.gaps){
               const p = pid[gr*COLS+gc];
-              if(p>=0 && !buffed.has(p)){ buffed.add(p); d += BONUS; }
+              if(p>=0 && !buffed.has(p) && CAN_BE_BUFFED[placed[p].cat]){ buffed.add(p); d += BONUS; }
             }
           }else if(cat==="banishment"){
             banishIdx = id; banishAdj = nbrs.size; banishNon = id - nbrs.size;
@@ -249,11 +253,11 @@ function solve(counts){
           // Synergy granted to already-placed specials
           for(const j of nbrs){
             const jc = placed[j].cat;
-            if(jc==="spark" && !sparkSat[j] && cat!=="pedigree"){ sparkSat[j] = true; satUndo.push(j); d += BONUS; }
-            else if(jc==="prairie" && cat!=="pedigree") d += BONUS;
-            else if(jc==="contamination") d += BONUS;
+            if(jc==="spark" && !sparkSat[j] && CAN_COPY_FROM[cat]){ sparkSat[j] = true; satUndo.push(j); d += BONUS; }
+            else if(jc==="prairie" && CAN_COPY_FROM[cat]) d += BONUS;
+            else if(jc==="contamination" && CAN_BE_BUFFED[cat]) d += BONUS;
           }
-          if(judgeIdx>=0 && judgeIdx!==id){
+          if(judgeIdx>=0 && judgeIdx!==id && CAN_BE_BUFFED[cat]){
             // New piece on the lines = one buffed slate, however many cells it covers.
             const gs = placed[judgeIdx].gapSet;
             for(const [r,c] of pl.cells) if(gs.has(r*COLS+c)){ d += BONUS; break; }
@@ -296,7 +300,8 @@ function solve(counts){
 
 /* ───── Post-solve analysis for display ───── */
 function analyzeSolution(sol){
-  if(!sol || !sol.length)return {items:[], gapAll:new Set(), gapCovered:new Set()};
+  const empty = {items:[], gapAll:new Set(), gapCovered:new Set(), pieceNotes:{}, pieceTags:{}};
+  if(!sol || !sol.length)return empty;
   const pid = {};
   sol.forEach((p,i)=>p.cells.forEach(([r,c])=>{ pid[`${r},${c}`] = i; }));
   const neighborIds = (cells, self)=>{
@@ -309,41 +314,52 @@ function analyzeSolution(sol){
   };
   const items = [];
   const gapAll = new Set(), gapCovered = new Set();
+  const pieceNotes = {}, pieceTags = {};
+  const addTag = (i,t)=>{ (pieceTags[i] = pieceTags[i]||[]).push(t); };
   sol.forEach((p,i)=>{
     const nbrs = [...neighborIds(p.cells, i)];
     if(p.cat==="spark"){
-      const copyable = nbrs.filter(j=>sol[j].cat!=="pedigree");
-      items.push({ok:copyable.length>0, cat:p.cat,
-        text: copyable.length
+      const copyable = nbrs.filter(j=>CAN_COPY_FROM[sol[j].cat]);
+      const ok = copyable.length>0;
+      pieceNotes[i] = ok ? `Copies ${PIECE_LABELS[sol[copyable[0]].cat]}` : "No copyable neighbor";
+      items.push({ok, cat:p.cat,
+        text: ok
           ? `Sparks of Moth Fire copies ${PIECE_LABELS[sol[copyable[0]].cat]}`
           : "Sparks of Moth Fire has no copyable neighbor"});
     }else if(p.cat==="prairie"){
-      const copyable = nbrs.filter(j=>sol[j].cat!=="pedigree");
+      const copyable = nbrs.filter(j=>CAN_COPY_FROM[sol[j].cat]);
+      pieceNotes[i] = `Copies ${copyable.length} adjacent slate${copyable.length===1?"":"s"}`;
       items.push({ok:copyable.length>0, cat:p.cat,
         text: `Prairie Ablaze copies ${copyable.length} adjacent slate${copyable.length===1?"":"s"}`
           + (copyable.length ? ` (${copyable.map(j=>PIECE_LABELS[sol[j].cat]).join(", ")})` : "")});
     }else if(p.cat==="contamination"){
-      items.push({ok:nbrs.length>0, cat:p.cat,
-        text: `Contamination projects into ${nbrs.length} adjacent slate${nbrs.length===1?"":"s"}`});
+      const targets = nbrs.filter(j=>CAN_BE_BUFFED[sol[j].cat]);
+      targets.forEach(j=>addTag(j, "Receives Contamination's talents"));
+      pieceNotes[i] = `Projects into ${targets.length} adjacent slate${targets.length===1?"":"s"}`;
+      items.push({ok:targets.length>0, cat:p.cat,
+        text: `Contamination projects into ${targets.length} adjacent slate${targets.length===1?"":"s"}`});
     }else if(p.cat==="judgement"){
       const gaps = p.gaps || [];
       const buffedPieces = new Set();
       gaps.forEach(([r,c])=>{
         gapAll.add(`${r},${c}`);
         const j = pid[`${r},${c}`];
-        if(j!==undefined){ buffedPieces.add(j); gapCovered.add(`${r},${c}`); }
+        if(j!==undefined && CAN_BE_BUFFED[sol[j].cat]){ buffedPieces.add(j); gapCovered.add(`${r},${c}`); }
       });
+      buffedPieces.forEach(j=>addTag(j, "Buffed by Judgement"));
+      pieceNotes[i] = `Buffs ${buffedPieces.size} slate${buffedPieces.size===1?"":"s"} on its lines`;
       items.push({ok:buffedPieces.size>0, cat:p.cat,
         text: `Judgement buffs ${buffedPieces.size} slate${buffedPieces.size===1?"":"s"} on its lines`
           + (buffedPieces.size ? ` (${[...buffedPieces].map(j=>PIECE_LABELS[sol[j].cat]).join(", ")})` : "")});
     }else if(p.cat==="banishment"){
       const adj = nbrs.length, non = sol.length - 1 - adj;
       const ok = adj===4 && non===4;
+      pieceNotes[i] = ok ? "Buff active (4 adjacent / 4 non-adjacent)" : `${adj} adjacent / ${non} non-adjacent`;
       items.push({ok, cat:p.cat,
         text: `Banishment: ${adj} adjacent / ${non} non-adjacent slates${ok?" — buff active":""}`});
     }
   });
-  return {items, gapAll, gapCovered};
+  return {items, gapAll, gapCovered, pieceNotes, pieceTags};
 }
 
 /* ───── Piece count color shading (vary per instance) ───── */
@@ -364,6 +380,7 @@ export default function SlateOptimizer(){
   const [counts, setCounts] = useState({...EMPTY_COUNTS});
   const [solving, setSolving] = useState(false);
   const [result, setResult] = useState(null);
+  const [hover, setHover] = useState(null); // {r,c} of hovered grid cell
 
   const totalArea = useMemo(()=>INV_ORDER.reduce((s,c)=>s+counts[c]*PIECE_SIZE[c],0), [counts]);
 
@@ -413,6 +430,22 @@ export default function SlateOptimizer(){
 
   const netherOthers = INV_ORDER.filter(c=>c!=="banishment").reduce((s,c)=>s+counts[c],0);
   const banishWarn = counts.banishment>0 && netherOthers<8;
+
+  // Tooltip content for the hovered cell
+  const hoverInfo = useMemo(()=>{
+    if(!hover || !result?.solution)return null;
+    const k = `${hover.r},${hover.c}`;
+    const pidH = display.cellPieceId[k];
+    if(pidH!==undefined){
+      const p = result.solution[pidH];
+      return {pid:pidH, title:PIECE_LABELS[p.cat], color:COLORS[p.cat],
+        lines:[analysis.pieceNotes[pidH], ...(analysis.pieceTags[pidH]||[])].filter(Boolean)};
+    }
+    if(analysis.gapAll.has(k))
+      return {pid:null, title:"Judgement buff line", color:COLORS.judgement,
+        lines:["A slate placed here gets buffed"]};
+    return null;
+  },[hover,result,display,analysis]);
 
   return(
     <div style={{
@@ -499,47 +532,76 @@ export default function SlateOptimizer(){
       )}
 
       {/* ── Grid ── */}
-      <div style={{
-        display:"grid",
-        gridTemplateColumns:`repeat(${COLS},${CELL}px)`,
-        gridTemplateRows:`repeat(${ROWS},${CELL}px)`,
-        gap:GAP,
-      }}>
-        {Array.from({length:ROWS},(_,r)=>
-          Array.from({length:COLS},(_,c)=>{
-            const k = `${r},${c}`;
-            const valid = VALID_SET.has(k);
-            if(!valid)return <div key={k} style={{width:CELL, height:CELL}}/>;
+      <div style={{position:"relative"}} onMouseLeave={()=>setHover(null)}>
+        <div style={{
+          display:"grid",
+          gridTemplateColumns:`repeat(${COLS},${CELL}px)`,
+          gridTemplateRows:`repeat(${ROWS},${CELL}px)`,
+          gap:GAP,
+        }}>
+          {Array.from({length:ROWS},(_,r)=>
+            Array.from({length:COLS},(_,c)=>{
+              const k = `${r},${c}`;
+              const valid = VALID_SET.has(k);
+              if(!valid)return <div key={k} style={{width:CELL, height:CELL}}/>;
 
-            const col = display.cellColor[k];
-            const brd = display.borders[k]||[];
-            const borderW = side=>brd.includes(side)?3:0;
-            const isGap = analysis.gapAll.has(k);
-            const isBuffed = analysis.gapCovered.has(k);
+              const col = display.cellColor[k];
+              const brd = display.borders[k]||[];
+              const borderW = side=>brd.includes(side)?3:0;
+              const isGap = analysis.gapAll.has(k);
+              const isBuffed = analysis.gapCovered.has(k);
+              const isHoveredPiece = hoverInfo?.pid!=null && display.cellPieceId[k]===hoverInfo.pid;
 
-            return(
-              <div key={k} style={{
-                width:CELL, height:CELL, position:"relative",
-                background:col||"#1a2332",
-                borderRadius:4, boxSizing:"border-box",
-                borderTop:`${borderW("top")}px solid rgba(0,0,0,0.5)`,
-                borderBottom:`${borderW("bottom")}px solid rgba(0,0,0,0.5)`,
-                borderLeft:`${borderW("left")}px solid rgba(0,0,0,0.5)`,
-                borderRight:`${borderW("right")}px solid rgba(0,0,0,0.5)`,
-                outline:col?"none":(isGap?`2px dashed ${COLORS.judgement}aa`:"1px solid #2a3a4a"),
-                outlineOffset:isGap&&!col?-3:0,
-                boxShadow:isBuffed?`inset 0 0 0 3px ${COLORS.judgement}cc`:"none",
-                transition:"background 0.3s",
-              }}>
-                {isGap && (
-                  <span style={{
-                    position:"absolute", top:2, right:4, fontSize:11,
-                    color:isBuffed?"#fff":COLORS.judgement, textShadow:"0 0 3px rgba(0,0,0,0.8)",
-                  }}>✦</span>
-                )}
-              </div>
-            );
-          })
+              return(
+                <div key={k}
+                  onMouseEnter={()=>setHover({r,c})}
+                  style={{
+                    width:CELL, height:CELL, position:"relative",
+                    background:col||"#1a2332",
+                    borderRadius:4, boxSizing:"border-box",
+                    borderTop:`${borderW("top")}px solid rgba(0,0,0,0.5)`,
+                    borderBottom:`${borderW("bottom")}px solid rgba(0,0,0,0.5)`,
+                    borderLeft:`${borderW("left")}px solid rgba(0,0,0,0.5)`,
+                    borderRight:`${borderW("right")}px solid rgba(0,0,0,0.5)`,
+                    outline:col?"none":(isGap?`2px dashed ${COLORS.judgement}aa`:"1px solid #2a3a4a"),
+                    outlineOffset:isGap&&!col?-3:0,
+                    boxShadow:isBuffed?`inset 0 0 0 3px ${COLORS.judgement}cc`:"none",
+                    filter:isHoveredPiece?"brightness(1.3)":"none",
+                    transition:"background 0.3s, filter 0.1s",
+                  }}>
+                  {isGap && (
+                    <span style={{
+                      position:"absolute", top:2, right:4, fontSize:11,
+                      color:isBuffed?"#fff":COLORS.judgement, textShadow:"0 0 3px rgba(0,0,0,0.8)",
+                      pointerEvents:"none",
+                    }}>✦</span>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* ── Hover tooltip ── */}
+        {hoverInfo && hover && (
+          <div style={{
+            position:"absolute", zIndex:10, pointerEvents:"none",
+            left:hover.c*(CELL+GAP)+CELL/2,
+            ...(hover.r<=1
+              ? {top:(hover.r+1)*(CELL+GAP)+6, transform:"translateX(-50%)"}
+              : {top:hover.r*(CELL+GAP)-8, transform:"translate(-50%,-100%)"}),
+            background:"#0b1220", border:`1px solid ${hoverInfo.color}`,
+            borderRadius:6, padding:"6px 10px", whiteSpace:"nowrap",
+            boxShadow:"0 4px 12px rgba(0,0,0,0.6)",
+          }}>
+            <div style={{display:"flex", alignItems:"center", gap:6, fontSize:11, fontWeight:700, color:"#e2e8f0"}}>
+              <div style={{width:9, height:9, borderRadius:2, background:hoverInfo.color, flexShrink:0}}/>
+              {hoverInfo.title}
+            </div>
+            {hoverInfo.lines.map((l,i)=>(
+              <div key={i} style={{fontSize:10, color:"#94a3b8", marginTop:2}}>{l}</div>
+            ))}
+          </div>
         )}
       </div>
 

@@ -9,8 +9,8 @@ Bonuses dominate raw coverage — a copy/projection is worth 10 points vs. 1 poi
 
 | Slate | Behavior |
 |---|---|
-| Sparks of Moth Fire | Copies the last talent of one adjacent slate (+10 if it has a copyable neighbor). Can never be placed adjacent to Prairie Ablaze |
-| Prairie Ablaze | Copies all talents on adjacent slates (+10 per distinct adjacent slate). Can never be placed adjacent to Sparks of Moth Fire |
+| Sparks of Moth Fire | Copies the last talent of one adjacent slate (+10 if it has a copyable neighbor). Can never be placed adjacent to Prairie Ablaze, and copiers can't copy other copiers |
+| Prairie Ablaze | Copies all talents on adjacent slates (+10 per distinct adjacent slate). Can never be placed adjacent to Sparks of Moth Fire, and copiers can't copy other copiers |
 | Nether King's Divinity: Judgement | L of three 1×1s; +10 (modifier-weighted) per distinct slate on the lines between them (marked ✦, max 4) |
 | Nether King's Divinity: Contamination | 3×1; projects its talents into each slate in its effect area (+10 each, modifier-weighted; a modifier extends reach to diagonals) |
 | Nether King's Divinity: Banishment | Three 1×1s connected diagonally; **hard constraint** — when placed, the solution must have at least 4 adjacent and at least 4 non-adjacent other slates (+30) |
@@ -22,6 +22,11 @@ Judgement and Contamination have configurable **Ultimate Nether King Talent Node
 (⚙ on their inventory cards) that weight projection/buff values per slate type, so the solver
 prefers putting the right slates next to them. "Non-legendary" means Normal Slates only —
 Fallen Starlight and Corner of Divinity count as legendary for modifier purposes.
+
+The solver runs in a Web Worker with a configurable search budget (4M states up to
+unlimited). It streams live progress, can be cancelled mid-search (keeping the best
+layout found so far), and reports whether the result is exhaustive/optimal or
+budget-capped.
 
 ## Development
 

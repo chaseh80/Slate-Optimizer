@@ -5,16 +5,21 @@ and it searches for the highest-scoring arrangement on the 2/4/6/6/4/2 board (24
 
 ## Scoring
 
-Bonuses dominate raw coverage — a copy/projection is worth 10 points vs. 1 point per covered cell:
+Score = total **effective mods** on the board. Each slate carries intrinsic mods and
+synergies add more; coverage is only a tie-breaker, so slates are always worth placing
+but never at the cost of a mod:
 
-| Slate | Behavior |
+| Slate | Value |
 |---|---|
-| Sparks of Moth Fire | Copies the last talent of one adjacent slate (+10 if it has a copyable neighbor). Can never be placed adjacent to Prairie Ablaze, and copiers can't copy other copiers |
-| Prairie Ablaze | Copies all talents on adjacent slates (+10 per distinct adjacent slate). Can never be placed adjacent to Sparks of Moth Fire, and copiers can't copy other copiers |
-| Nether King's Divinity: Judgement | L of three 1×1s; +10 (modifier-weighted) per distinct slate on the lines between them (marked ✦, max 4) |
-| Nether King's Divinity: Contamination | 3×1; projects its talents into each slate in its effect area (+10 each, modifier-weighted; a modifier extends reach to diagonals) |
-| Nether King's Divinity: Banishment | Three 1×1s connected diagonally; **hard constraint** — when placed, the solution must have at least 4 adjacent and at least 4 non-adjacent other slates (+30) |
-| Pedigree of the Gods | Cannot be copied *from* — Spark/Prairie ignore it |
+| Normal Slate | 5 mods |
+| Fallen Starlight | 2 mods |
+| Corner of Divinity | 2 mods |
+| Pedigree of the Gods | Adjustable (default 7) — its strong unique mods are hard to quantify, so set it on the card. Cannot be copied *from* |
+| Sparks of Moth Fire | +1 mod (copies the last talent of one adjacent slate). Can never be placed adjacent to Prairie Ablaze; copiers can't copy other copiers |
+| Prairie Ablaze | + the full mod value of each distinct adjacent copyable slate (up to 4 neighbors, so up to +20 next to Normals). Can never be placed adjacent to Sparks |
+| Nether King's Divinity: Judgement | Buffs each distinct slate on its lines (✦) for 50% of that slate's own mods (talent nodes add +25%/+20% for matching types) |
+| Nether King's Divinity: Contamination | Projects 2 mods into each slate in its effect area, scaled by its talent nodes; one node extends reach to diagonals |
+| Nether King's Divinity: Banishment | +5 mods; **hard constraint** — when placed, the solution must have at least 4 adjacent and at least 4 non-adjacent other slates |
 
 Only one Nether King's Divinity variant can be owned at a time.
 

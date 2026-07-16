@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useRef } from "react";
 import {
   ROWS, COLS, VALID, VALID_SET, TOTAL,
   PIECE_SIZE, PIECE_MAX, NETHER, COLORS, PIECE_LABELS, PIECE_DESC,
-  NETHER_MODS, EMPTY_MODS, analyzeSolution,
+  NETHER_MODS, EMPTY_MODS, DEFAULT_PEDIGREE_VALUE, modValueTable, analyzeSolution,
 } from "./solver.js";
 
 /* ───── Inventory columns ───── */
@@ -44,6 +44,7 @@ const EMPTY_COUNTS = Object.fromEntries(INV_ORDER.map(c=>[c,0]));
 export default function SlateOptimizer(){
   const [counts, setCounts] = useState({...EMPTY_COUNTS});
   const [mods, setMods] = useState({...EMPTY_MODS});
+  const [pedigreeVal, setPedigreeVal] = useState(DEFAULT_PEDIGREE_VALUE);
   const [modOpen, setModOpen] = useState(null); // which nether cat's modifier panel is open
   const [budgetIdx, setBudgetIdx] = useState(2); // default 25M states
   const [solving, setSolving] = useState(false);
@@ -55,6 +56,11 @@ export default function SlateOptimizer(){
 
   const toggleMod = useCallback((id)=>{
     setMods(p=>({...p, [id]:!p[id]}));
+    setResult(null);
+  },[]);
+
+  const changePedigreeVal = useCallback((v)=>{
+    setPedigreeVal(Math.max(1, Math.min(15, v)));
     setResult(null);
   },[]);
 
@@ -86,20 +92,20 @@ export default function SlateOptimizer(){
         setResult(e.data.result); setSolving(false); setProgress(null);
       }
     };
-    w.postMessage({counts, mods, maxIters:BUDGETS[budgetIdx].v});
-  },[counts,mods,totalArea,solving,budgetIdx]);
+    w.postMessage({counts, mods, pedigreeVal, maxIters:BUDGETS[budgetIdx].v});
+  },[counts,mods,pedigreeVal,totalArea,solving,budgetIdx]);
 
   const handleCancel = useCallback(()=>{
     if(workerRef.current){ workerRef.current.terminate(); workerRef.current = null; }
     const p = progressRef.current;
     if(p){
       setResult({solution:p.best.sol, score:p.best.score, coverage:p.best.coverage,
-        bonus:p.best.bonus, iterations:p.iters, time:0, timedOut:true, cancelled:true});
+        bonus:p.best.bonus, intrinsic:p.best.intrinsic, iterations:p.iters, time:0, timedOut:true, cancelled:true});
     }
     setSolving(false); setProgress(null);
   },[]);
 
-  const analysis = useMemo(()=>analyzeSolution(result?.solution, mods), [result,mods]);
+  const analysis = useMemo(()=>analyzeSolution(result?.solution, mods, pedigreeVal), [result,mods,pedigreeVal]);
 
   // Build display grid from solution
   const display = useMemo(()=>{
@@ -171,7 +177,7 @@ export default function SlateOptimizer(){
               {col.title}
             </div>
             {col.note && <div style={{fontSize:10, color:"#6b5f8a", maxWidth:300, textAlign:"center"}}>{col.note}</div>}
-            {col.cats.map(cat=>renderCard(cat, counts, setCount, mods, setModOpen))}
+            {col.cats.map(cat=>renderCard(cat, counts, setCount, mods, setModOpen, pedigreeVal, changePedigreeVal))}
           </div>
         ))}
       </div>
@@ -225,9 +231,9 @@ export default function SlateOptimizer(){
       {/* ── Result stats ── */}
       {result && (
         <div style={{fontSize:12, color:"#64748b", display:"flex", gap:16, flexWrap:"wrap", justifyContent:"center"}}>
-          <span>Score: <b style={{color:"#e2e8f0"}}>{fmtNum(result.score)}</b></span>
+          <span>Effective mods: <b style={{color:"#e2e8f0"}}>{fmtNum(result.score)}</b></span>
+          <span>Slates: <b style={{color:"#94a3b8"}}>{fmtNum(result.intrinsic)}</b> · Synergy: <b style={{color:"#c084fc"}}>+{fmtNum(result.bonus)}</b></span>
           <span>Coverage: <b style={{color:result.coverage===TOTAL?"#22c55e":"#f59e0b"}}>{result.coverage}/{TOTAL}</b></span>
-          <span>Bonus: <b style={{color:"#c084fc"}}>{fmtNum(result.bonus)}</b></span>
           <span>Pieces placed: {result.solution.length}</span>
           <span>
             Searched {result.iterations.toLocaleString()} states{result.time?` in ${result.time}ms`:""}
@@ -384,11 +390,12 @@ export default function SlateOptimizer(){
   );
 }
 
-function renderCard(cat, counts, setCount, mods, openMods){
+function renderCard(cat, counts, setCount, mods, openMods, pedigreeVal, changePedigreeVal){
   // Inside the Nether section the header already says "Nether King's Divinity".
   const label = NETHER.includes(cat) ? PIECE_LABELS[cat].split(": ")[1] : PIECE_LABELS[cat];
   const modList = NETHER_MODS[cat];
   const activeMods = modList ? modList.filter(m=>mods[m.id]).length : 0;
+  const intrinsicMods = modValueTable(pedigreeVal)[cat];
   return(
     <div key={cat} style={{
       display:"flex", alignItems:"center", gap:8,
@@ -401,8 +408,17 @@ function renderCard(cat, counts, setCount, mods, openMods){
         <div style={{fontSize:11, color:"#94a3b8"}}>{label}</div>
         <div style={{fontSize:10, color:"#475569"}}>
           {PIECE_SIZE[cat]} cell{PIECE_SIZE[cat]===1?"":"s"} · max {PIECE_MAX[cat]}
+          {cat!=="pedigree" && intrinsicMods>0 ? ` · ${intrinsicMods} mods` : ""}
           {PIECE_DESC[cat] ? ` · ${PIECE_DESC[cat]}` : ""}
         </div>
+        {cat==="pedigree" && (
+          <div style={{display:"flex", alignItems:"center", gap:6, marginTop:4}}>
+            <span style={{fontSize:10, color:"#64748b"}}>Mod value:</span>
+            <Btn small onClick={()=>changePedigreeVal(pedigreeVal-1)} disabled={pedigreeVal<=1}>−</Btn>
+            <span style={{fontSize:12, fontWeight:700, color:"#c084fc", minWidth:16, textAlign:"center"}}>{pedigreeVal}</span>
+            <Btn small onClick={()=>changePedigreeVal(pedigreeVal+1)} disabled={pedigreeVal>=15}>+</Btn>
+          </div>
+        )}
       </div>
       {modList && (
         <button onClick={()=>openMods(cat)} title="Configure modifiers" style={{

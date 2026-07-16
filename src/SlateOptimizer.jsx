@@ -50,19 +50,66 @@ const PIECE_DESC = {
   prairie:"Copies all talents on adjacent slates",
   judgement:"Buffs slates on the lines between its cells",
   contamination:"Projects its talents into each adjacent slate",
-  banishment:"Buff at exactly 4 adjacent + 4 non-adjacent slates",
+  banishment:"Buff at 4+ adjacent and 4+ non-adjacent slates",
 };
+
+/* ───── Nether King modifiers (Ultimate Nether King Talent Nodes) ───── */
+const NETHER_MODS = {
+  contamination: [
+    {id:"c_all12",    label:"+12% Projection Effect for all Divinity Slates"},
+    {id:"c_pedigree", label:"+100% Projection Effect for all Pedigree of Gods"},
+    {id:"c_starlight",label:"+50% Projection Effect for all Fallen Starlight"},
+    {id:"c_corner",   label:"+30% Projection Effect for all A Corner of Divinity"},
+    {id:"c_nonleg",   label:"+30% Projection Effect for all Non-Legendary Divinity Slates"},
+    {id:"c_statue",   label:"Statue of The New God has an empty slot: +30% Projection Effect for all Divinity Slates"},
+    {id:"c_diag",     label:"Diagonally adjacent spaces are also within its effect area"},
+  ],
+  judgement: [
+    {id:"j_cs",     label:"+25% Effect Increase Multiplier for A Corner of Divinity and Fallen Starlight along the connecting line"},
+    {id:"j_nonleg", label:"+20% Effect Increase Multiplier for Non-Legendary Divinity Slates along the connecting line"},
+  ],
+};
+const EMPTY_MODS = Object.fromEntries(
+  Object.values(NETHER_MODS).flatMap(list=>list.map(m=>[m.id,false])));
+
+/* Per-slate-type value of one Contamination projection, given active modifiers.
+   Non-legendary = Normal Slate (Starlight/Corner count as legendary). */
+function contamValueTable(mods){
+  const t = {};
+  for(const cat of CAT_ORDER){
+    if(!CAN_BE_BUFFED[cat]){ t[cat] = 0; continue; }
+    let m = 1;
+    if(mods.c_all12)  m += 0.12;
+    if(mods.c_statue) m += 0.30;
+    if(cat==="pedigree"  && mods.c_pedigree)  m += 1.0;
+    if(cat==="starlight" && mods.c_starlight) m += 0.5;
+    if(cat==="corner"    && mods.c_corner)    m += 0.3;
+    if(cat==="normal"    && mods.c_nonleg)    m += 0.3;
+    t[cat] = BONUS*m;
+  }
+  return t;
+}
+/* Per-slate-type value of sitting on Judgement's lines. */
+function judgeValueTable(mods){
+  const t = {};
+  for(const cat of CAT_ORDER){
+    if(!CAN_BE_BUFFED[cat]){ t[cat] = 0; continue; }
+    let m = 1;
+    if((cat==="corner"||cat==="starlight") && mods.j_cs) m += 0.25;
+    if(cat==="normal" && mods.j_nonleg) m += 0.20;
+    t[cat] = BONUS*m;
+  }
+  return t;
+}
 
 /* ───── Scoring ─────
    Bonuses dominate: one copy/projection outweighs several covered cells. */
 const BONUS = 10;          // per copy / projection / buffed slate
-const BANISH_BONUS = 30;   // banishment buff (only counted when 4+4 holds)
+const BANISH_BONUS = 30;   // banishment buff (only counted when 4+/4+ holds)
 // Pedigree and Nether King slates can't be copied from; buffing slates
 // (Spark, Prairie) can't be buffed by Nether King slates either.
 const CAN_COPY_FROM = {pedigree:false,normal:true,corner:true,starlight:true,spark:true,prairie:true,judgement:false,contamination:false,banishment:false};
 const CAN_BE_BUFFED = {pedigree:true,normal:true,corner:true,starlight:true,spark:false,prairie:false,judgement:true,contamination:true,banishment:true};
-const MAXB = {spark:BONUS, prairie:4*BONUS, contamination:8*BONUS, judgement:4*BONUS,
-              banishment:BANISH_BONUS, pedigree:0, normal:0, corner:0, starlight:0};
 // Solver try-order: big coverage pieces first, specials after.
 const CAT_ORDER = ["pedigree","normal","corner","starlight","judgement","contamination","banishment","spark","prairie"];
 // Inventory columns.
@@ -151,15 +198,27 @@ function buildCoverIndex(plc){
 const ALL_PLC = computeAllPlacements();
 const COVER_IDX = buildCoverIndex(ALL_PLC);
 const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
+const DIRS8 = [...DIRS,[1,1],[1,-1],[-1,1],[-1,-1]];
 
 /* ───── Solver ─────
    Branch-and-bound over placements. Score = covered cells + synergy bonuses.
-   Banishment, when placed, is a hard constraint: exactly 4 adjacent and
-   4 non-adjacent other slates — solutions violating it are never recorded. */
-function solve(counts){
+   Banishment, when placed, is a hard constraint: at least 4 adjacent and
+   at least 4 non-adjacent other slates — solutions violating it are never recorded.
+   Spark and Prairie may never be placed adjacent to each other. */
+function solve(counts, mods){
   const occ = new Int8Array(ROWS*COLS).fill(-1); // -1 off-board, 0 empty, 1 filled, 2 skipped
   const pid = new Int16Array(ROWS*COLS).fill(-1);
   for(const [r,c] of VALID) occ[r*COLS+c] = 0;
+
+  const contamVal = contamValueTable(mods);
+  const judgeVal = judgeValueTable(mods);
+  const CDIRS = mods.c_diag ? DIRS8 : DIRS; // Contamination effect-area reach
+  const MAXB = {
+    spark:BONUS, prairie:4*BONUS, banishment:BANISH_BONUS,
+    contamination:(mods.c_diag?12:8)*Math.max(...Object.values(contamVal)),
+    judgement:4*Math.max(...Object.values(judgeVal)),
+    pedigree:0, normal:0, corner:0, starlight:0,
+  };
 
   const rem = {...counts};
   let coverage = 0, bonus = 0, emptyCells = TOTAL;
@@ -167,6 +226,7 @@ function solve(counts){
   let potential = CAT_ORDER.reduce((s,c)=>s+(counts[c]||0)*MAXB[c], 0);
   const placed = [], sparkSat = [];
   let banishIdx = -1, banishAdj = 0, banishNon = 0, judgeIdx = -1;
+  let contamIdx = -1, contamEff = null; // effect-area cell set of placed Contamination
   let best = {score:0, sol:[], coverage:0, bonus:0};
   let iters = 0, timedOut = false;
   const t0 = performance.now(), LIMIT = 8000, MAX_ITERS = 40_000_000;
@@ -189,7 +249,7 @@ function solve(counts){
     if(++iters%4096===0 && (performance.now()-t0>LIMIT || iters>MAX_ITERS)){ timedOut = true; return; }
 
     const score = coverage + bonus;
-    const banishOk = banishIdx<0 || (banishAdj===4 && banishNon===4);
+    const banishOk = banishIdx<0 || (banishAdj>=4 && banishNon>=4);
     if(banishOk && score>best.score){
       best = {score, sol:placed.map(p=>({cat:p.cat, cells:p.cells, gaps:p.gaps})), coverage, bonus};
     }
@@ -200,9 +260,7 @@ function solve(counts){
     for(const [r,c] of VALID) if(occ[r*COLS+c]===0){ tr=r; tc=c; break; }
     if(tr===-1)return;
 
-    // With banishment down and 8 other slates placed, nothing more may be added.
-    const banishFull = banishIdx>=0 && placed.length-1>=8;
-    if(!banishFull){
+    {
       const opts = COVER_IDX[`${tr},${tc}`] || {};
       for(const cat of CAT_ORDER){
         if(!rem[cat] || !opts[cat])continue;
@@ -213,13 +271,12 @@ function solve(counts){
           if(!ok)continue;
 
           const nbrs = neighborIds(pl.cells);
-          // Banishment feasibility: counts can only grow, so reject early.
-          if(cat==="banishment"){
-            const adj = nbrs.size, non = placed.length - adj;
-            if(adj>4 || non>4)continue;
-          }else if(banishIdx>=0){
-            if(nbrs.has(banishIdx)){ if(banishAdj>=4)continue; }
-            else { if(banishNon>=4)continue; }
+          // Spark and Prairie can never sit next to each other.
+          if(cat==="spark"||cat==="prairie"){
+            const other = cat==="spark"?"prairie":"spark";
+            let bad = false;
+            for(const j of nbrs) if(placed[j].cat===other){ bad = true; break; }
+            if(bad)continue;
           }
 
           /* ── place ── */
@@ -237,14 +294,23 @@ function solve(counts){
           }else if(cat==="prairie"){
             for(const j of nbrs) if(CAN_COPY_FROM[placed[j].cat]) d += BONUS;
           }else if(cat==="contamination"){
-            for(const j of nbrs) if(CAN_BE_BUFFED[placed[j].cat]) d += BONUS;
+            contamIdx = id;
+            const eff = new Set();
+            for(const [r,c] of pl.cells)for(const [dr,dc] of CDIRS){
+              const rr = r+dr, cc = c+dc;
+              if(rr>=0&&rr<ROWS&&cc>=0&&cc<COLS) eff.add(rr*COLS+cc);
+            }
+            contamEff = eff;
+            const targets = new Set();
+            for(const idx of eff){ const p = pid[idx]; if(p>=0 && p!==id) targets.add(p); }
+            for(const j of targets) d += contamVal[placed[j].cat];
           }else if(cat==="judgement"){
             judgeIdx = id;
             // One buff per distinct buffable slate on the lines, not per covered cell.
             const buffed = new Set();
             for(const [gr,gc] of pl.gaps){
               const p = pid[gr*COLS+gc];
-              if(p>=0 && !buffed.has(p) && CAN_BE_BUFFED[placed[p].cat]){ buffed.add(p); d += BONUS; }
+              if(p>=0 && !buffed.has(p) && judgeVal[placed[p].cat]>0){ buffed.add(p); d += judgeVal[placed[p].cat]; }
             }
           }else if(cat==="banishment"){
             banishIdx = id; banishAdj = nbrs.size; banishNon = id - nbrs.size;
@@ -255,12 +321,15 @@ function solve(counts){
             const jc = placed[j].cat;
             if(jc==="spark" && !sparkSat[j] && CAN_COPY_FROM[cat]){ sparkSat[j] = true; satUndo.push(j); d += BONUS; }
             else if(jc==="prairie" && CAN_COPY_FROM[cat]) d += BONUS;
-            else if(jc==="contamination" && CAN_BE_BUFFED[cat]) d += BONUS;
           }
-          if(judgeIdx>=0 && judgeIdx!==id && CAN_BE_BUFFED[cat]){
+          if(contamIdx>=0 && contamIdx!==id && contamVal[cat]>0){
+            // New piece in Contamination's effect area = one projection target.
+            for(const [r,c] of pl.cells) if(contamEff.has(r*COLS+c)){ d += contamVal[cat]; break; }
+          }
+          if(judgeIdx>=0 && judgeIdx!==id && judgeVal[cat]>0){
             // New piece on the lines = one buffed slate, however many cells it covers.
             const gs = placed[judgeIdx].gapSet;
-            for(const [r,c] of pl.cells) if(gs.has(r*COLS+c)){ d += BONUS; break; }
+            for(const [r,c] of pl.cells) if(gs.has(r*COLS+c)){ d += judgeVal[cat]; break; }
           }
           let banishDelta = null;
           if(banishIdx>=0 && banishIdx!==id){
@@ -276,6 +345,7 @@ function solve(counts){
           if(banishDelta==="adj")banishAdj--; else if(banishDelta==="non")banishNon--;
           for(const j of satUndo) sparkSat[j] = false;
           if(cat==="judgement") judgeIdx = -1;
+          if(cat==="contamination"){ contamIdx = -1; contamEff = null; }
           if(cat==="banishment"){ banishIdx = -1; banishAdj = 0; banishNon = 0; }
           rem[cat]++; coverage -= pl.cells.length; emptyCells += pl.cells.length;
           placed.pop(); sparkSat.pop();
@@ -299,19 +369,22 @@ function solve(counts){
 }
 
 /* ───── Post-solve analysis for display ───── */
-function analyzeSolution(sol){
+function analyzeSolution(sol, mods){
   const empty = {items:[], gapAll:new Set(), gapCovered:new Set(), pieceNotes:{}, pieceTags:{}};
   if(!sol || !sol.length)return empty;
+  const contamVal = contamValueTable(mods);
+  const judgeVal = judgeValueTable(mods);
   const pid = {};
   sol.forEach((p,i)=>p.cells.forEach(([r,c])=>{ pid[`${r},${c}`] = i; }));
-  const neighborIds = (cells, self)=>{
+  const neighborIds = (cells, self, dirs=DIRS)=>{
     const s = new Set();
-    for(const [r,c] of cells)for(const [dr,dc] of DIRS){
+    for(const [r,c] of cells)for(const [dr,dc] of dirs){
       const p = pid[`${r+dr},${c+dc}`];
       if(p!==undefined && p!==self) s.add(p);
     }
     return s;
   };
+  const fmt = v=>Math.round(v*10)/10;
   const items = [];
   const gapAll = new Set(), gapCovered = new Set();
   const pieceNotes = {}, pieceTags = {};
@@ -333,28 +406,33 @@ function analyzeSolution(sol){
         text: `Prairie Ablaze copies ${copyable.length} adjacent slate${copyable.length===1?"":"s"}`
           + (copyable.length ? ` (${copyable.map(j=>PIECE_LABELS[sol[j].cat]).join(", ")})` : "")});
     }else if(p.cat==="contamination"){
-      const targets = nbrs.filter(j=>CAN_BE_BUFFED[sol[j].cat]);
+      const reach = mods.c_diag ? DIRS8 : DIRS;
+      const targets = [...neighborIds(p.cells, i, reach)].filter(j=>contamVal[sol[j].cat]>0);
       targets.forEach(j=>addTag(j, "Receives Contamination's talents"));
-      pieceNotes[i] = `Projects into ${targets.length} adjacent slate${targets.length===1?"":"s"}`;
+      const val = targets.reduce((s,j)=>s+contamVal[sol[j].cat], 0);
+      pieceNotes[i] = `Projects into ${targets.length} slate${targets.length===1?"":"s"} (+${fmt(val)})`;
       items.push({ok:targets.length>0, cat:p.cat,
-        text: `Contamination projects into ${targets.length} adjacent slate${targets.length===1?"":"s"}`});
+        text: `Contamination projects into ${targets.length} slate${targets.length===1?"":"s"}`
+          + (targets.length ? ` (+${fmt(val)} bonus)` : "")
+          + (mods.c_diag ? " · diagonal reach" : "")});
     }else if(p.cat==="judgement"){
       const gaps = p.gaps || [];
       const buffedPieces = new Set();
       gaps.forEach(([r,c])=>{
         gapAll.add(`${r},${c}`);
         const j = pid[`${r},${c}`];
-        if(j!==undefined && CAN_BE_BUFFED[sol[j].cat]){ buffedPieces.add(j); gapCovered.add(`${r},${c}`); }
+        if(j!==undefined && judgeVal[sol[j].cat]>0){ buffedPieces.add(j); gapCovered.add(`${r},${c}`); }
       });
       buffedPieces.forEach(j=>addTag(j, "Buffed by Judgement"));
-      pieceNotes[i] = `Buffs ${buffedPieces.size} slate${buffedPieces.size===1?"":"s"} on its lines`;
+      const val = [...buffedPieces].reduce((s,j)=>s+judgeVal[sol[j].cat], 0);
+      pieceNotes[i] = `Buffs ${buffedPieces.size} slate${buffedPieces.size===1?"":"s"} on its lines (+${fmt(val)})`;
       items.push({ok:buffedPieces.size>0, cat:p.cat,
         text: `Judgement buffs ${buffedPieces.size} slate${buffedPieces.size===1?"":"s"} on its lines`
-          + (buffedPieces.size ? ` (${[...buffedPieces].map(j=>PIECE_LABELS[sol[j].cat]).join(", ")})` : "")});
+          + (buffedPieces.size ? ` (+${fmt(val)} bonus: ${[...buffedPieces].map(j=>PIECE_LABELS[sol[j].cat]).join(", ")})` : "")});
     }else if(p.cat==="banishment"){
       const adj = nbrs.length, non = sol.length - 1 - adj;
-      const ok = adj===4 && non===4;
-      pieceNotes[i] = ok ? "Buff active (4 adjacent / 4 non-adjacent)" : `${adj} adjacent / ${non} non-adjacent`;
+      const ok = adj>=4 && non>=4;
+      pieceNotes[i] = ok ? `Buff active (${adj} adjacent / ${non} non-adjacent)` : `${adj} adjacent / ${non} non-adjacent`;
       items.push({ok, cat:p.cat,
         text: `Banishment: ${adj} adjacent / ${non} non-adjacent slates${ok?" — buff active":""}`});
     }
@@ -363,8 +441,9 @@ function analyzeSolution(sol){
 }
 
 /* ───── Piece count color shading (vary per instance) ───── */
+const SHADE_SHIFTS = [-42,-14,14,42];
 function shadeColor(hex,i){
-  const shift = (i%3-1)*25;
+  const shift = SHADE_SHIFTS[i%SHADE_SHIFTS.length];
   const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
   const clamp = v=>Math.max(0,Math.min(255,v+shift));
   return `rgb(${clamp(r)},${clamp(g)},${clamp(b)})`;
@@ -378,9 +457,16 @@ const EMPTY_COUNTS = Object.fromEntries(INV_ORDER.map(c=>[c,0]));
 
 export default function SlateOptimizer(){
   const [counts, setCounts] = useState({...EMPTY_COUNTS});
+  const [mods, setMods] = useState({...EMPTY_MODS});
+  const [modOpen, setModOpen] = useState(null); // which nether cat's modifier panel is open
   const [solving, setSolving] = useState(false);
   const [result, setResult] = useState(null);
   const [hover, setHover] = useState(null); // {r,c} of hovered grid cell
+
+  const toggleMod = useCallback((id)=>{
+    setMods(p=>({...p, [id]:!p[id]}));
+    setResult(null);
+  },[]);
 
   const totalArea = useMemo(()=>INV_ORDER.reduce((s,c)=>s+counts[c]*PIECE_SIZE[c],0), [counts]);
 
@@ -399,11 +485,11 @@ export default function SlateOptimizer(){
     if(totalArea===0)return;
     setSolving(true); setResult(null);
     await new Promise(r=>setTimeout(r,60));
-    const res = solve(counts);
+    const res = solve(counts, mods);
     setResult(res); setSolving(false);
-  },[counts,totalArea]);
+  },[counts,mods,totalArea]);
 
-  const analysis = useMemo(()=>analyzeSolution(result?.solution), [result]);
+  const analysis = useMemo(()=>analyzeSolution(result?.solution, mods), [result,mods]);
 
   // Build display grid from solution
   const display = useMemo(()=>{
@@ -457,6 +543,9 @@ export default function SlateOptimizer(){
       <h1 style={{fontSize:22, fontWeight:700, color:"#e2e8f0", margin:0, letterSpacing:"0.05em"}}>
         SLATE OPTIMIZER
       </h1>
+      <div style={{fontSize:12, color:"#94a3b8", textAlign:"center"}}>
+        Enter how many of each slate you own, then press <b style={{color:"#e2e8f0"}}>Solve</b> — the optimizer finds the best layout for you.
+      </div>
 
       {/* ── Piece inventory: three columns ── */}
       <div style={{display:"flex", flexWrap:"wrap", gap:10, justifyContent:"center", alignItems:"stretch"}}>
@@ -472,7 +561,7 @@ export default function SlateOptimizer(){
               {col.title}
             </div>
             {col.note && <div style={{fontSize:10, color:"#6b5f8a", maxWidth:300, textAlign:"center"}}>{col.note}</div>}
-            {col.cats.map(cat=>renderCard(cat, counts, setCount))}
+            {col.cats.map(cat=>renderCard(cat, counts, setCount, mods, setModOpen))}
           </div>
         ))}
       </div>
@@ -502,7 +591,7 @@ export default function SlateOptimizer(){
 
       {banishWarn && (
         <div style={{fontSize:11, color:"#f59e0b", maxWidth:520, textAlign:"center"}}>
-          ⚠ Banishment's buff needs exactly 8 other slates (4 adjacent, 4 non-adjacent).
+          ⚠ Banishment's buff needs at least 8 other slates (4+ adjacent, 4+ non-adjacent).
           You have {netherOthers} — it won't be placed unless the buff can be satisfied.
         </div>
       )}
@@ -510,9 +599,9 @@ export default function SlateOptimizer(){
       {/* ── Result stats ── */}
       {result && (
         <div style={{fontSize:12, color:"#64748b", display:"flex", gap:16, flexWrap:"wrap", justifyContent:"center"}}>
-          <span>Score: <b style={{color:"#e2e8f0"}}>{result.score}</b></span>
+          <span>Score: <b style={{color:"#e2e8f0"}}>{Math.round(result.score*10)/10}</b></span>
           <span>Coverage: <b style={{color:result.coverage===TOTAL?"#22c55e":"#f59e0b"}}>{result.coverage}/{TOTAL}</b></span>
-          <span>Bonus: <b style={{color:"#c084fc"}}>{result.bonus}</b></span>
+          <span>Bonus: <b style={{color:"#c084fc"}}>{Math.round(result.bonus*10)/10}</b></span>
           <span>Pieces placed: {result.solution.length}</span>
           <span>Searched {result.iterations.toLocaleString()} states in {result.time}ms{result.timedOut?" (time limit — best found)":""}</span>
         </div>
@@ -559,10 +648,10 @@ export default function SlateOptimizer(){
                     width:CELL, height:CELL, position:"relative",
                     background:col||"#1a2332",
                     borderRadius:4, boxSizing:"border-box",
-                    borderTop:`${borderW("top")}px solid rgba(0,0,0,0.5)`,
-                    borderBottom:`${borderW("bottom")}px solid rgba(0,0,0,0.5)`,
-                    borderLeft:`${borderW("left")}px solid rgba(0,0,0,0.5)`,
-                    borderRight:`${borderW("right")}px solid rgba(0,0,0,0.5)`,
+                    borderTop:`${borderW("top")}px solid #0f1419`,
+                    borderBottom:`${borderW("bottom")}px solid #0f1419`,
+                    borderLeft:`${borderW("left")}px solid #0f1419`,
+                    borderRight:`${borderW("right")}px solid #0f1419`,
                     outline:col?"none":(isGap?`2px dashed ${COLORS.judgement}aa`:"1px solid #2a3a4a"),
                     outlineOffset:isGap&&!col?-3:0,
                     boxShadow:isBuffed?`inset 0 0 0 3px ${COLORS.judgement}cc`:"none",
@@ -621,13 +710,56 @@ export default function SlateOptimizer(){
           )}
         </div>
       )}
+
+      {/* ── Nether King modifier panel ── */}
+      {modOpen && NETHER_MODS[modOpen] && (
+        <div onClick={()=>setModOpen(null)} style={{
+          position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", zIndex:100,
+          display:"flex", alignItems:"center", justifyContent:"center", padding:20,
+        }}>
+          <div onClick={e=>e.stopPropagation()} style={{
+            background:"#141c27", border:"1px solid #4c3a6e", borderRadius:12,
+            padding:"16px 20px", width:520, maxWidth:"92vw", maxHeight:"80vh",
+            overflowY:"auto", boxSizing:"border-box",
+          }}>
+            <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4}}>
+              <div style={{display:"flex", alignItems:"center", gap:8}}>
+                <div style={{width:12, height:12, borderRadius:3, background:COLORS[modOpen]}}/>
+                <span style={{fontSize:13, fontWeight:700, color:"#e2e8f0"}}>
+                  {PIECE_LABELS[modOpen]} — Modifiers
+                </span>
+              </div>
+              <Btn small onClick={()=>setModOpen(null)}>✕</Btn>
+            </div>
+            <div style={{fontSize:10, color:"#6b5f8a", marginBottom:8}}>
+              Ultimate Nether King Talent Nodes — toggle the ones you have rolled.
+            </div>
+            {NETHER_MODS[modOpen].map(m=>(
+              <label key={m.id} style={{
+                display:"flex", alignItems:"flex-start", gap:10, padding:"8px 10px",
+                margin:"4px 0", borderRadius:8, cursor:"pointer",
+                background:mods[m.id]?"#1e1533":"#0f1622",
+                border:`1px solid ${mods[m.id]?"#6d4fa8":"#243447"}`,
+              }}>
+                <input type="checkbox" checked={!!mods[m.id]} onChange={()=>toggleMod(m.id)}
+                  style={{marginTop:2, accentColor:"#7c3aed", cursor:"pointer"}}/>
+                <span style={{fontSize:11, color:mods[m.id]?"#c8b8ec":"#94a3b8", lineHeight:1.5}}>
+                  {m.label}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function renderCard(cat, counts, setCount){
+function renderCard(cat, counts, setCount, mods, openMods){
   // Inside the Nether section the header already says "Nether King's Divinity".
   const label = NETHER.includes(cat) ? PIECE_LABELS[cat].split(": ")[1] : PIECE_LABELS[cat];
+  const modList = NETHER_MODS[cat];
+  const activeMods = modList ? modList.filter(m=>mods[m.id]).length : 0;
   return(
     <div key={cat} style={{
       display:"flex", alignItems:"center", gap:8,
@@ -643,6 +775,26 @@ function renderCard(cat, counts, setCount){
           {PIECE_DESC[cat] ? ` · ${PIECE_DESC[cat]}` : ""}
         </div>
       </div>
+      {modList && (
+        <button onClick={()=>openMods(cat)} title="Configure modifiers" style={{
+          width:28, height:28, padding:0, fontSize:14, fontFamily:"inherit",
+          background:activeMods?"#2b2140":"#1e293b",
+          color:activeMods?"#c4a7f7":"#94a3b8",
+          border:`1px solid ${activeMods?"#6d4fa8":"#334155"}`,
+          borderRadius:6, cursor:"pointer",
+          display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1,
+          position:"relative", flexShrink:0,
+        }}>
+          ⚙
+          {activeMods>0 && (
+            <span style={{
+              position:"absolute", top:-6, right:-6, fontSize:9, fontWeight:700,
+              background:"#7c3aed", color:"#fff", borderRadius:8,
+              minWidth:14, height:14, display:"flex", alignItems:"center", justifyContent:"center",
+            }}>{activeMods}</span>
+          )}
+        </button>
+      )}
       <div style={{display:"flex", alignItems:"center", gap:4}}>
         <Btn small onClick={()=>setCount(cat,counts[cat]-1)} disabled={counts[cat]<=0}>−</Btn>
         <span style={{fontSize:16, fontWeight:700, color:"#e2e8f0", minWidth:20, textAlign:"center"}}>

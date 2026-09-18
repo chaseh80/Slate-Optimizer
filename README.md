@@ -11,14 +11,16 @@ but never at the cost of a mod:
 
 | Slate | Value |
 |---|---|
-| Normal Slate | 5 mods |
+| Normal Slate | Adjustable 1–5 (default 5) — most Normals carry 3–4 good mods, so set it on the card |
 | Fallen Starlight | 2 mods |
 | Corner of Divinity | 2 mods |
 | Pedigree of the Gods | Adjustable 0–3 (default 0) — its 1–2 mods are highly impactful but unscalable, so use the **Require** toggle on its card to force it into the layout instead of inflating its score. Cannot be copied *from* |
 | Sparks of Moth Fire | +1 mod (copies the last talent of one adjacent slate). Can never be placed adjacent to Prairie Ablaze; copiers can't copy other copiers |
 | Prairie Ablaze | +1 mod per distinct adjacent copyable slate (copies each one's *last* talent; max 4). Can never be placed adjacent to Sparks |
 | Nether King's Divinity: Judgement | Baseline +70% effect for every distinct slate on its lines (✦): buffed slate's weight × 0.70, with the +25% (Corner/Starlight) and +20% (non-legendary) nodes stacking on top. E.g. Normal on a line = +3.5, or +4.5 with the node |
-| Nether King's Divinity: Contamination | Projects **all its talents at 20% strength** into each slate in its effect area — set its baseline talent value on the card (default 1, so 5 targets ≈ +1). Its nodes multiply each projection (+100% Pedigree, etc.); the Statue node's +30% only counts if the final board has an empty slot; one node extends reach to diagonals |
+| Nether King's Divinity: Contamination | Projects **all its talents at 20% strength** into each slate in its effect area, including the 1×1 legendaries (Spark, Prairie) — set its baseline talent value on the card (default 1, so 5 targets ≈ +1). Its nodes multiply each projection (+100% Pedigree, etc.); the Statue node's +30% only counts if the final board has an empty slot; one node extends reach to diagonals |
+
+Nether King slots are fixed in-game, so the solved layout can be rotated 90° left/right with the buttons under the board.
 | Nether King's Divinity: Banishment | +1 mod per **non-adjacent** slate; **hard constraint** — when placed, the solution must have at least 4 adjacent and at least 4 non-adjacent other slates |
 
 Only one Nether King's Divinity variant can be owned at a time.

@@ -89,15 +89,19 @@ export const COVER_EPS = 0.01;        // per-cell tie-breaker
 // its mods are impactful but unscalable, so "require it" is the usual want).
 export const DEFAULT_PEDIGREE_VALUE = 0;
 export const MAX_PEDIGREE_VALUE = 3;
-export function modValueTable(pedigreeVal){
-  return {pedigree:pedigreeVal, normal:5, starlight:2, corner:2,
+// Normal slates can roll up to 5 mods but often carry fewer good ones — adjustable 1–5.
+export const DEFAULT_NORMAL_VALUE = 5;
+export const MIN_NORMAL_VALUE = 1, MAX_NORMAL_VALUE = 5;
+export function modValueTable(pedigreeVal = DEFAULT_PEDIGREE_VALUE, normalVal = DEFAULT_NORMAL_VALUE){
+  return {pedigree:pedigreeVal, normal:normalVal, starlight:2, corner:2,
           spark:0, prairie:0, judgement:0, contamination:0, banishment:0};
 }
 // Pedigree and Nether King slates can't be copied from, and neither can the
-// copiers themselves (Spark/Prairie); buffing slates (Spark, Prairie) can't
-// be buffed by Nether King slates either.
+// copiers themselves (Spark/Prairie). Judgement's lines don't buff the 1x1
+// copiers, but Contamination CAN project into them.
 export const CAN_COPY_FROM = {pedigree:false,normal:true,corner:true,starlight:true,spark:false,prairie:false,judgement:false,contamination:false,banishment:false};
 export const CAN_BE_BUFFED = {pedigree:true,normal:true,corner:true,starlight:true,spark:false,prairie:false,judgement:true,contamination:true,banishment:true};
+export const CONTAM_TARGET = {pedigree:true,normal:true,corner:true,starlight:true,spark:true,prairie:true,judgement:true,contamination:true,banishment:true};
 // Solver try-order: big coverage pieces first, specials after.
 export const CAT_ORDER = ["pedigree","normal","corner","starlight","judgement","contamination","banishment","spark","prairie"];
 
@@ -110,7 +114,7 @@ export function contamValueTable(mods, contamWorth = DEFAULT_CONTAM_VALUE){
   const base = contamWorth*CONTAM_PCT;
   const t = {};
   for(const cat of CAT_ORDER){
-    if(!CAN_BE_BUFFED[cat]){ t[cat] = 0; continue; }
+    if(!CONTAM_TARGET[cat]){ t[cat] = 0; continue; }
     let m = 1;
     if(mods.c_all12)  m += 0.12;
     if(cat==="pedigree"  && mods.c_pedigree)  m += 1.0;
@@ -224,6 +228,7 @@ export const DIRS8 = [...DIRS,[1,1],[1,-1],[-1,1],[-1,-1]];
 export function solve(counts, mods, opts = {}){
   const {
     pedigreeVal = DEFAULT_PEDIGREE_VALUE,
+    normalVal = DEFAULT_NORMAL_VALUE,
     contamWorth = DEFAULT_CONTAM_VALUE,
     requirePedigree = false,
     maxIters = 25_000_000,
@@ -233,7 +238,7 @@ export function solve(counts, mods, opts = {}){
   const pid = new Int16Array(ROWS*COLS).fill(-1);
   for(const [r,c] of VALID) occ[r*COLS+c] = 0;
 
-  const modVal = modValueTable(pedigreeVal);
+  const modVal = modValueTable(pedigreeVal, normalVal);
   const contamVal = contamValueTable(mods, contamWorth);
   const judgeVal = judgeValueTable(mods, modVal);
   const statueAdd = contamWorth*CONTAM_PCT*0.30; // per target, only when board has an empty slot
@@ -427,11 +432,12 @@ export function solve(counts, mods, opts = {}){
 export function analyzeSolution(sol, mods, opts = {}){
   const {
     pedigreeVal = DEFAULT_PEDIGREE_VALUE,
+    normalVal = DEFAULT_NORMAL_VALUE,
     contamWorth = DEFAULT_CONTAM_VALUE,
   } = opts;
   const empty = {items:[], gapAll:new Set(), gapCovered:new Set(), pieceNotes:{}, pieceTags:{}};
   if(!sol || !sol.length)return empty;
-  const modVal = modValueTable(pedigreeVal);
+  const modVal = modValueTable(pedigreeVal, normalVal);
   const contamVal = contamValueTable(mods, contamWorth);
   const judgeVal = judgeValueTable(mods, modVal);
   const statueAdd = contamWorth*CONTAM_PCT*0.30;

@@ -3,8 +3,16 @@ import {
   ROWS, COLS, VALID, VALID_SET, TOTAL,
   PIECE_SIZE, PIECE_MAX, NETHER, COLORS, PIECE_LABELS, PIECE_DESC,
   NETHER_MODS, EMPTY_MODS, DEFAULT_PEDIGREE_VALUE, MAX_PEDIGREE_VALUE,
+  DEFAULT_NORMAL_VALUE, MIN_NORMAL_VALUE, MAX_NORMAL_VALUE,
   DEFAULT_CONTAM_VALUE, MAX_CONTAM_VALUE, modValueTable, analyzeSolution,
 } from "./solver.js";
+
+/* Rotate a cell 90° clockwise k times on the (4-fold symmetric) board. */
+function rotCell([r,c], k){
+  let rr = r, cc = c;
+  for(let i=0;i<k;i++){ const nr = cc, nc = COLS-1-rr; rr = nr; cc = nc; }
+  return [rr,cc];
+}
 
 /* ───── Inventory columns ───── */
 const INV_COLUMNS = [
@@ -48,6 +56,8 @@ export default function SlateOptimizer(){
   const [pedigreeVal, setPedigreeVal] = useState(DEFAULT_PEDIGREE_VALUE);
   const [requirePedigree, setRequirePedigree] = useState(false);
   const [contamWorth, setContamWorth] = useState(DEFAULT_CONTAM_VALUE);
+  const [normalVal, setNormalVal] = useState(DEFAULT_NORMAL_VALUE);
+  const [rotation, setRotation] = useState(0); // quarter-turns clockwise applied to the displayed layout
   const [modOpen, setModOpen] = useState(null); // which nether cat's modifier panel is open
   const [budgetIdx, setBudgetIdx] = useState(2); // default 25M states
   const [solving, setSolving] = useState(false);
@@ -69,6 +79,11 @@ export default function SlateOptimizer(){
 
   const changeContamWorth = useCallback((v)=>{
     setContamWorth(Math.max(0, Math.min(MAX_CONTAM_VALUE, v)));
+    setResult(null);
+  },[]);
+
+  const changeNormalVal = useCallback((v)=>{
+    setNormalVal(Math.max(MIN_NORMAL_VALUE, Math.min(MAX_NORMAL_VALUE, v)));
     setResult(null);
   },[]);
 
@@ -111,8 +126,8 @@ export default function SlateOptimizer(){
         setResult(e.data.result); setSolving(false); setProgress(null);
       }
     };
-    w.postMessage({counts, mods, pedigreeVal, contamWorth, requirePedigree, maxIters:BUDGETS[budgetIdx].v});
-  },[counts,mods,pedigreeVal,contamWorth,requirePedigree,totalArea,solving,budgetIdx]);
+    w.postMessage({counts, mods, pedigreeVal, normalVal, contamWorth, requirePedigree, maxIters:BUDGETS[budgetIdx].v});
+  },[counts,mods,pedigreeVal,normalVal,contamWorth,requirePedigree,totalArea,solving,budgetIdx]);
 
   const handleCancel = useCallback(()=>{
     if(workerRef.current){ workerRef.current.terminate(); workerRef.current = null; }
@@ -124,13 +139,25 @@ export default function SlateOptimizer(){
     setSolving(false); setProgress(null);
   },[]);
 
-  const analysis = useMemo(()=>analyzeSolution(result?.solution, mods, {pedigreeVal, contamWorth}), [result,mods,pedigreeVal,contamWorth]);
+  // The solution as displayed: rotated by the user's chosen quarter-turns.
+  const shownSolution = useMemo(()=>{
+    if(!result?.solution)return null;
+    const k = ((rotation%4)+4)%4;
+    if(k===0)return result.solution;
+    return result.solution.map(p=>({
+      ...p,
+      cells: p.cells.map(c=>rotCell(c,k)),
+      gaps: p.gaps ? p.gaps.map(c=>rotCell(c,k)) : p.gaps,
+    }));
+  },[result,rotation]);
+
+  const analysis = useMemo(()=>analyzeSolution(shownSolution, mods, {pedigreeVal, normalVal, contamWorth}), [shownSolution,mods,pedigreeVal,normalVal,contamWorth]);
 
   // Build display grid from solution
   const display = useMemo(()=>{
-    if(!result?.solution)return {cellColor:{}, cellPieceId:{}, borders:{}};
+    if(!shownSolution)return {cellColor:{}, cellPieceId:{}, borders:{}};
     const cellColor = {}, cellPieceId = {};
-    result.solution.forEach((p,i)=>{
+    shownSolution.forEach((p,i)=>{
       const col = shadeColor(COLORS[p.cat], i);
       p.cells.forEach(([r,c])=>{ cellColor[`${r},${c}`] = col; cellPieceId[`${r},${c}`] = i; });
     });
@@ -147,18 +174,18 @@ export default function SlateOptimizer(){
       borders[k] = b;
     }
     return {cellColor, cellPieceId, borders};
-  },[result]);
+  },[shownSolution]);
 
   const netherOthers = INV_ORDER.filter(c=>c!=="banishment").reduce((s,c)=>s+counts[c],0);
   const banishWarn = counts.banishment>0 && netherOthers<8;
 
   // Tooltip content for the hovered cell
   const hoverInfo = useMemo(()=>{
-    if(!hover || !result?.solution)return null;
+    if(!hover || !shownSolution)return null;
     const k = `${hover.r},${hover.c}`;
     const pidH = display.cellPieceId[k];
     if(pidH!==undefined){
-      const p = result.solution[pidH];
+      const p = shownSolution[pidH];
       return {pid:pidH, title:PIECE_LABELS[p.cat], color:COLORS[p.cat],
         lines:[analysis.pieceNotes[pidH], ...(analysis.pieceTags[pidH]||[])].filter(Boolean)};
     }
@@ -166,7 +193,7 @@ export default function SlateOptimizer(){
       return {pid:null, title:"Judgement buff line", color:COLORS.judgement,
         lines:["A slate placed here gets buffed"]};
     return null;
-  },[hover,result,display,analysis]);
+  },[hover,shownSolution,display,analysis]);
 
   return(
     <div style={{
@@ -198,7 +225,7 @@ export default function SlateOptimizer(){
             {col.note && <div style={{fontSize:10, color:"#6b5f8a", maxWidth:300, textAlign:"center"}}>{col.note}</div>}
             {col.cats.map(cat=>renderCard(cat, counts, setCount, mods, setModOpen,
               {pedigreeVal, changePedigreeVal, requirePedigree, toggleRequirePedigree,
-               contamWorth, changeContamWorth}))}
+               contamWorth, changeContamWorth, normalVal, changeNormalVal}))}
           </div>
         ))}
       </div>
@@ -350,6 +377,17 @@ export default function SlateOptimizer(){
         )}
       </div>
 
+      {/* ── Rotate layout (Nether King slots are fixed in-game; rotating the whole board is fine) ── */}
+      {result?.solution && result.solution.length>0 && (
+        <div style={{display:"flex", alignItems:"center", gap:8}}>
+          <Btn onClick={()=>setRotation(r=>r-1)}>⟲ Rotate left</Btn>
+          <span style={{fontSize:10, color:"#64748b", minWidth:36, textAlign:"center"}}>
+            {(((rotation%4)+4)%4)*90}°
+          </span>
+          <Btn onClick={()=>setRotation(r=>r+1)}>Rotate right ⟳</Btn>
+        </div>
+      )}
+
       {/* ── Legend ── */}
       {result?.solution && result.solution.length>0 && (
         <div style={{display:"flex", gap:12, flexWrap:"wrap", justifyContent:"center", maxWidth:640}}>
@@ -413,12 +451,12 @@ export default function SlateOptimizer(){
 
 function renderCard(cat, counts, setCount, mods, openMods, extras){
   const {pedigreeVal, changePedigreeVal, requirePedigree, toggleRequirePedigree,
-         contamWorth, changeContamWorth} = extras;
+         contamWorth, changeContamWorth, normalVal, changeNormalVal} = extras;
   // Inside the Nether section the header already says "Nether King's Divinity".
   const label = NETHER.includes(cat) ? PIECE_LABELS[cat].split(": ")[1] : PIECE_LABELS[cat];
   const modList = NETHER_MODS[cat];
   const activeMods = modList ? modList.filter(m=>mods[m.id]).length : 0;
-  const intrinsicMods = modValueTable(pedigreeVal)[cat];
+  const intrinsicMods = modValueTable(pedigreeVal, normalVal)[cat];
   return(
     <div key={cat} style={{
       display:"flex", alignItems:"center", gap:8,
@@ -431,9 +469,17 @@ function renderCard(cat, counts, setCount, mods, openMods, extras){
         <div style={{fontSize:11, color:"#94a3b8"}}>{label}</div>
         <div style={{fontSize:10, color:"#475569"}}>
           {PIECE_SIZE[cat]} cell{PIECE_SIZE[cat]===1?"":"s"} · max {PIECE_MAX[cat]}
-          {cat!=="pedigree" && intrinsicMods>0 ? ` · ${intrinsicMods} mods` : ""}
+          {cat!=="pedigree" && cat!=="normal" && intrinsicMods>0 ? ` · ${intrinsicMods} mods` : ""}
           {PIECE_DESC[cat] ? ` · ${PIECE_DESC[cat]}` : ""}
         </div>
+        {cat==="normal" && (
+          <div style={{display:"flex", alignItems:"center", gap:6, marginTop:4}}>
+            <span style={{fontSize:10, color:"#64748b"}}>Mod value:</span>
+            <Btn small onClick={()=>changeNormalVal(normalVal-1)} disabled={normalVal<=MIN_NORMAL_VALUE}>−</Btn>
+            <span style={{fontSize:12, fontWeight:700, color:COLORS.normal, minWidth:16, textAlign:"center"}}>{normalVal}</span>
+            <Btn small onClick={()=>changeNormalVal(normalVal+1)} disabled={normalVal>=MAX_NORMAL_VALUE}>+</Btn>
+          </div>
+        )}
         {cat==="pedigree" && (
           <div style={{display:"flex", alignItems:"center", gap:6, marginTop:4, flexWrap:"wrap"}}>
             <span style={{fontSize:10, color:"#64748b"}}>Mod value:</span>

@@ -4,7 +4,7 @@ import {
   PIECE_SIZE, PIECE_MAX, NETHER, COLORS, PIECE_LABELS, PIECE_DESC,
   NETHER_MODS, EMPTY_MODS, DEFAULT_PEDIGREE_VALUE, MAX_PEDIGREE_VALUE,
   DEFAULT_NORMAL_VALUE, MIN_NORMAL_VALUE, MAX_NORMAL_VALUE,
-  DEFAULT_CONTAM_VALUE, MAX_CONTAM_VALUE, modValueTable, analyzeSolution,
+  DEFAULT_CONTAM_VALUE, MAX_CONTAM_VALUE, CONTAM_PCT, BANISH_MIN, modValueTable, analyzeSolution,
 } from "./solver.js";
 
 /* Rotate a cell 90° clockwise k times on the (4-fold symmetric) board. */
@@ -177,7 +177,7 @@ export default function SlateOptimizer(){
   },[shownSolution]);
 
   const netherOthers = INV_ORDER.filter(c=>c!=="banishment").reduce((s,c)=>s+counts[c],0);
-  const banishWarn = counts.banishment>0 && netherOthers<8;
+  const banishWarn = counts.banishment>0 && netherOthers<2*BANISH_MIN;
 
   // Tooltip content for the hovered cell
   const hoverInfo = useMemo(()=>{
@@ -264,7 +264,7 @@ export default function SlateOptimizer(){
 
       {banishWarn && (
         <div style={{fontSize:11, color:"#f59e0b", maxWidth:520, textAlign:"center"}}>
-          ⚠ Banishment's buff needs at least 8 other slates (4+ adjacent, 4+ non-adjacent).
+          ⚠ Banishment's buff needs at least {2*BANISH_MIN} other slates ({BANISH_MIN}+ adjacent, {BANISH_MIN}+ non-adjacent).
           You have {netherOthers} — it won't be placed unless the buff can be satisfied.
         </div>
       )}
@@ -503,7 +503,7 @@ function renderCard(cat, counts, setCount, mods, openMods, extras){
             <Btn small onClick={()=>changeContamWorth(contamWorth-1)} disabled={contamWorth<=0}>−</Btn>
             <span style={{fontSize:12, fontWeight:700, color:COLORS.contamination, minWidth:16, textAlign:"center"}}>{contamWorth}</span>
             <Btn small onClick={()=>changeContamWorth(contamWorth+1)} disabled={contamWorth>=MAX_CONTAM_VALUE}>+</Btn>
-            <span style={{fontSize:9, color:"#475569"}}>(projected at 20% per slate)</span>
+            <span style={{fontSize:9, color:"#475569"}}>(projected at {Math.round(CONTAM_PCT*100)}% per slate)</span>
           </div>
         )}
       </div>

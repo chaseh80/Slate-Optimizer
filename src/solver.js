@@ -24,6 +24,7 @@ const BASE_SHAPES = {
   contamination: { cells: [[0,0],[0,1],[0,2]] },
   banishment:    { cells: [[0,0],[1,1],[2,2]] }, // three 1x1s stacked diagonally
 };
+const BANISH_SLOT = [[0,3],[1,4],[2,5]]; // top-right outer edge
 const NORMAL_BASES = [
   [[0,0],[0,1],[1,0],[1,1]],       // O
   [[0,0],[0,1],[0,2],[1,1]],       // T
@@ -52,7 +53,7 @@ export const PIECE_DESC = {
   prairie:"Copies the last talent of each adjacent slate (+1 each, max 4)",
   judgement:"Buffs slates on its lines: +40% effect, talent nodes add more (⚙)",
   contamination:"Projects its talents at 12% strength into each touching slate (⚙)",
-  banishment:"Buff at 3+ adj & 3+ non-adj: +1 mod per non-adjacent slate",
+  banishment:"Locked to an outer diagonal edge. Buff at 3+ adj & 3+ non-adj: +1 mod per non-adjacent slate",
 };
 
 /* ───── Nether King modifiers (Ultimate Nether King Talent Nodes) ───── */
@@ -199,6 +200,11 @@ function computeAllPlacements(){
     if(!seen.has(k)){ seen.add(k); oris.push(o); }
   }
   add("normal", oris);
+  // Banishment is locked in-game to the board's four outer diagonal edges. The
+  // board is 4-fold rotationally symmetric, so trying only the top-right edge
+  // loses no layouts — the other three edges are rotations of any result.
+  const slotKey = JSON.stringify(BANISH_SLOT);
+  plc.banishment = plc.banishment.filter(p=>JSON.stringify(p.cells)===slotKey);
   return plc;
 }
 
@@ -423,7 +429,26 @@ export function solve(counts, mods, opts = {}){
     occ[tr*COLS+tc] = 0; emptyCells++;
   }
 
-  bt();
+  if(rem.banishment>0){
+    // Banishment has a single fixed slot, so search with it pre-placed first;
+    // otherwise the budget is spent on Banishment-less layouts before the scan
+    // ever reaches its slot. Then fall back to layouts without it.
+    const pl = ALL_PLC.banishment[0];
+    for(const [r,c] of pl.cells){ occ[r*COLS+c] = 1; pid[r*COLS+c] = 0; }
+    placed.push({cat:"banishment", cells:pl.cells, gaps:pl.gaps, gapSet:pl.gapSet});
+    sparkSat.push(false);
+    coverage += pl.cells.length; emptyCells -= pl.cells.length; rem.banishment--;
+    banishIdx = 0; banishAdj = 0; banishNon = 0;
+    bt();
+    banishIdx = -1;
+    placed.pop(); sparkSat.pop();
+    coverage -= pl.cells.length; emptyCells += pl.cells.length;
+    for(const [r,c] of pl.cells){ occ[r*COLS+c] = 0; pid[r*COLS+c] = -1; }
+    potential -= MAXB.banishment;
+    bt();
+  }else{
+    bt();
+  }
   return {
     solution: best.sol, score: best.intrinsic + best.bonus, coverage: best.coverage,
     bonus: best.bonus, intrinsic: best.intrinsic,

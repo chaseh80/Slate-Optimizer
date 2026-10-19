@@ -21,7 +21,7 @@ but never at the cost of a mod:
 | Nether King's Divinity: Contamination | Projects **all its talents at 12% strength** into each slate in its effect area, including the 1×1 legendaries (Spark, Prairie) — set its baseline talent value on the card (default 1, so 5 targets = +0.6). Its nodes multiply each projection (+100% Pedigree, etc.); the Statue node's +30% only counts if the final board has an empty slot; one node extends reach to diagonals |
 
 Nether King slots are fixed in-game, so the solved layout can be rotated 90° left/right with the buttons under the board.
-| Nether King's Divinity: Banishment | +1 mod per **non-adjacent** slate; **hard constraint** — when placed, the solution must have at least 3 adjacent and at least 3 non-adjacent other slates |
+| Nether King's Divinity: Banishment | Locked in-game to one of the board's four outer diagonal edges (the solver uses the top-right edge; rotate the result for the others). +1 mod per **non-adjacent** slate; **hard constraint** — when placed, the solution must have at least 3 adjacent and at least 3 non-adjacent other slates |
 
 Only one Nether King's Divinity variant can be owned at a time.
 

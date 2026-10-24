@@ -55,6 +55,7 @@ export default function SlateOptimizer(){
   const [mods, setMods] = useState({...EMPTY_MODS});
   const [pedigreeVal, setPedigreeVal] = useState(DEFAULT_PEDIGREE_VALUE);
   const [requirePedigree, setRequirePedigree] = useState(false);
+  const [requireNether, setRequireNether] = useState(false);
   const [contamWorth, setContamWorth] = useState(DEFAULT_CONTAM_VALUE);
   const [normalVal, setNormalVal] = useState(DEFAULT_NORMAL_VALUE);
   const [rotation, setRotation] = useState(0); // quarter-turns clockwise applied to the displayed layout
@@ -108,8 +109,16 @@ export default function SlateOptimizer(){
       return n;
     });
     if(cat==="pedigree" && val===0) setRequirePedigree(false);
+    if(NETHER.includes(cat) && val===0) setRequireNether(false);
     setResult(null);
   },[]);
+
+  // Requiring a variant implies owning it, which (one variant max) clears the others.
+  const toggleRequireNether = useCallback((cat, isRequiredHere)=>{
+    if(isRequiredHere){ setRequireNether(false); setResult(null); return; }
+    setCount(cat, 1);
+    setRequireNether(true);
+  },[setCount]);
 
   const handleSolve = useCallback(()=>{
     if(totalArea===0 || solving)return;
@@ -126,15 +135,16 @@ export default function SlateOptimizer(){
         setResult(e.data.result); setSolving(false); setProgress(null);
       }
     };
-    w.postMessage({counts, mods, pedigreeVal, normalVal, contamWorth, requirePedigree, maxIters:BUDGETS[budgetIdx].v});
-  },[counts,mods,pedigreeVal,normalVal,contamWorth,requirePedigree,totalArea,solving,budgetIdx]);
+    w.postMessage({counts, mods, pedigreeVal, normalVal, contamWorth, requirePedigree, requireNether, maxIters:BUDGETS[budgetIdx].v});
+  },[counts,mods,pedigreeVal,normalVal,contamWorth,requirePedigree,requireNether,totalArea,solving,budgetIdx]);
 
   const handleCancel = useCallback(()=>{
     if(workerRef.current){ workerRef.current.terminate(); workerRef.current = null; }
     const p = progressRef.current;
     if(p){
       setResult({solution:p.best.sol, score:p.best.score, coverage:p.best.coverage,
-        bonus:p.best.bonus, intrinsic:p.best.intrinsic, iterations:p.iters, time:0, timedOut:true, cancelled:true});
+        bonus:p.best.bonus, intrinsic:p.best.intrinsic, iterations:p.iters, time:0, timedOut:true, cancelled:true,
+        banishBuffInactive:p.best.buffInactive});
     }
     setSolving(false); setProgress(null);
   },[]);
@@ -225,6 +235,7 @@ export default function SlateOptimizer(){
             {col.note && <div style={{fontSize:10, color:"#6b5f8a", maxWidth:300, textAlign:"center"}}>{col.note}</div>}
             {col.cats.map(cat=>renderCard(cat, counts, setCount, mods, setModOpen,
               {pedigreeVal, changePedigreeVal, requirePedigree, toggleRequirePedigree,
+               requireNether, toggleRequireNether,
                contamWorth, changeContamWorth, normalVal, changeNormalVal}))}
           </div>
         ))}
@@ -265,7 +276,9 @@ export default function SlateOptimizer(){
       {banishWarn && (
         <div style={{fontSize:11, color:"#f59e0b", maxWidth:520, textAlign:"center"}}>
           ⚠ Banishment's buff needs at least {2*BANISH_MIN} other slates ({BANISH_MIN}+ adjacent, {BANISH_MIN}+ non-adjacent).
-          You have {netherOthers} — it won't be placed unless the buff can be satisfied.
+          You have {netherOthers} — {requireNether
+            ? "it will be placed without its buff."
+            : "it won't be placed unless the buff can be satisfied."}
         </div>
       )}
 
@@ -287,6 +300,24 @@ export default function SlateOptimizer(){
             Searched {result.iterations.toLocaleString()} states{result.time?` in ${result.time}ms`:""}
             {result.cancelled?" (cancelled — best found)":result.timedOut?" (budget reached — best found)":" (exhaustive — optimal)"}
           </span>
+        </div>
+      )}
+
+      {/* ── Explain results that would otherwise look broken ── */}
+      {result && result.solution.length===0 && (
+        <div style={{fontSize:12, color:"#f59e0b", maxWidth:560, textAlign:"center",
+          border:"1px solid #f59e0b55", borderRadius:8, padding:"8px 12px"}}>
+          ⚠ {result.timedOut
+            ? "No layout that includes all your Required slates was found before the time limit. Try a longer time limit."
+            : "No layout can include all your Required slates together. Turn off a Require toggle or change your inventory."}
+        </div>
+      )}
+      {result && result.banishBuffInactive && (
+        <div style={{fontSize:12, color:"#f59e0b", maxWidth:560, textAlign:"center",
+          border:"1px solid #f59e0b55", borderRadius:8, padding:"8px 12px"}}>
+          ⚠ Banishment is placed without its buff: no layout gives it {BANISH_MIN}+ adjacent and {BANISH_MIN}+ non-adjacent
+          slates with this inventory. All of those slates must fit in the {TOTAL-PIECE_SIZE.banishment} cells around
+          Banishment, so smaller slates (Fallen Starlight, Sparks, Prairie) make the buff easier to reach.
         </div>
       )}
 
@@ -451,7 +482,9 @@ export default function SlateOptimizer(){
 
 function renderCard(cat, counts, setCount, mods, openMods, extras){
   const {pedigreeVal, changePedigreeVal, requirePedigree, toggleRequirePedigree,
+         requireNether, toggleRequireNether,
          contamWorth, changeContamWorth, normalVal, changeNormalVal} = extras;
+  const netherRequiredHere = requireNether && counts[cat]>0;
   // Inside the Nether section the header already says "Nether King's Divinity".
   const label = NETHER.includes(cat) ? PIECE_LABELS[cat].split(": ")[1] : PIECE_LABELS[cat];
   const modList = NETHER_MODS[cat];
@@ -486,15 +519,12 @@ function renderCard(cat, counts, setCount, mods, openMods, extras){
             <Btn small onClick={()=>changePedigreeVal(pedigreeVal-1)} disabled={pedigreeVal<=0}>−</Btn>
             <span style={{fontSize:12, fontWeight:700, color:"#c084fc", minWidth:16, textAlign:"center"}}>{pedigreeVal}</span>
             <Btn small onClick={()=>changePedigreeVal(pedigreeVal+1)} disabled={pedigreeVal>=MAX_PEDIGREE_VALUE}>+</Btn>
-            <button onClick={toggleRequirePedigree} style={{
-              padding:"4px 10px", fontSize:10, fontWeight:700, fontFamily:"inherit",
-              background:requirePedigree?"#3b2a5e":"#1e293b",
-              color:requirePedigree?"#c4a7f7":"#94a3b8",
-              border:`1px solid ${requirePedigree?"#7c3aed":"#334155"}`,
-              borderRadius:12, cursor:"pointer", lineHeight:1,
-            }}>
-              {requirePedigree?"✓ Required":"Require"}
-            </button>
+            <RequirePill on={requirePedigree} onClick={toggleRequirePedigree}/>
+          </div>
+        )}
+        {NETHER.includes(cat) && (
+          <div style={{marginTop:4}}>
+            <RequirePill on={netherRequiredHere} onClick={()=>toggleRequireNether(cat, netherRequiredHere)}/>
           </div>
         )}
         {cat==="contamination" && (
@@ -535,6 +565,20 @@ function renderCard(cat, counts, setCount, mods, openMods, extras){
         <Btn small onClick={()=>setCount(cat,counts[cat]+1)} disabled={counts[cat]>=PIECE_MAX[cat]}>+</Btn>
       </div>
     </div>
+  );
+}
+
+function RequirePill({on, onClick}){
+  return(
+    <button onClick={onClick} style={{
+      padding:"4px 10px", fontSize:10, fontWeight:700, fontFamily:"inherit",
+      background:on?"#3b2a5e":"#1e293b",
+      color:on?"#c4a7f7":"#94a3b8",
+      border:`1px solid ${on?"#7c3aed":"#334155"}`,
+      borderRadius:12, cursor:"pointer", lineHeight:1,
+    }}>
+      {on?"✓ Required":"Require"}
+    </button>
   );
 }
 

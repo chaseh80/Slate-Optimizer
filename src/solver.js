@@ -240,6 +240,7 @@ export function solve(counts, mods, opts = {}){
     normalVal = DEFAULT_NORMAL_VALUE,
     contamWorth = DEFAULT_CONTAM_VALUE,
     requirePedigree = false,
+    requireNether = false,
     maxIters = 25_000_000,
     onProgress = null,
   } = opts;
@@ -266,6 +267,8 @@ export function solve(counts, mods, opts = {}){
 
   const pedigreeNeed = requirePedigree && (counts.pedigree||0)>0;
   let pedigreePlaced = 0;
+  const netherNeed = requireNether && NETHER.some(c=>(counts[c]||0)>0);
+  let netherPlaced = 0;
 
   const rem = {...counts};
   let coverage = 0, bonus = 0, intrinsic = 0, emptyCells = TOTAL;
@@ -276,6 +279,10 @@ export function solve(counts, mods, opts = {}){
   let contamIdx = -1, contamEff = null; // effect-area cell set of placed Contamination
   let contamTargets = 0; // distinct projection targets of placed Contamination
   let best = {score:0, sol:[], coverage:0, bonus:0, intrinsic:0};
+  // A required Banishment is placed even when its buff can't be met; this holds
+  // the best such layout, used only if no buff-active layout exists.
+  let fallback = null;
+  const pick = ()=>(best.sol.length || !fallback) ? best : fallback;
   let iters = 0, capped = false;
   const t0 = performance.now();
 
@@ -298,7 +305,7 @@ export function solve(counts, mods, opts = {}){
     if(capped)return;
     if(++iters%4096===0){
       if(iters>maxIters){ capped = true; return; }
-      if(onProgress && iters%2_097_152===0) onProgress(iters, best);
+      if(onProgress && iters%2_097_152===0) onProgress(iters, pick());
     }
 
     // Evaluation-time extras that depend on the whole-board state:
@@ -310,8 +317,15 @@ export function solve(counts, mods, opts = {}){
     const score = intrinsic + bonus + extra + COVER_EPS*coverage;
     const banishOk = banishIdx<0 || (banishAdj>=BANISH_MIN && banishNon>=BANISH_MIN);
     const pedigreeOk = !pedigreeNeed || pedigreePlaced>0;
-    if(banishOk && pedigreeOk && score>best.score){
+    const netherOk = !netherNeed || netherPlaced>0;
+    if(banishOk && pedigreeOk && netherOk && score>best.score){
       best = {score, sol:placed.map(p=>({cat:p.cat, cells:p.cells, gaps:p.gaps})), coverage, bonus:bonus+extra, intrinsic};
+    }else if(!banishOk && netherNeed && pedigreeOk && best.sol.length===0){
+      const s = score - banishNon; // buff inactive: no per-non-adjacent value
+      if(!fallback || s>fallback.score){
+        fallback = {score:s, sol:placed.map(p=>({cat:p.cat, cells:p.cells, gaps:p.gaps})), coverage,
+                    bonus:bonus+extra-banishNon, intrinsic, buffInactive:true};
+      }
     }
     // Prune: even placing every remaining piece and hitting every remaining bonus can't beat best.
     // (`potential` never shrinks for the evaluation-time extras, so it bounds them too.)
@@ -403,12 +417,14 @@ export function solve(counts, mods, opts = {}){
           }
           bonus += d; potential -= d; intrinsic += modVal[cat];
           if(cat==="pedigree") pedigreePlaced++;
+          if(cat==="judgement"||cat==="contamination") netherPlaced++;
 
           bt();
 
           /* ── unplace ── */
           bonus -= d; potential += d; intrinsic -= modVal[cat];
           if(cat==="pedigree") pedigreePlaced--;
+          if(cat==="judgement"||cat==="contamination") netherPlaced--;
           if(banishDelta==="adj")banishAdj--; else if(banishDelta==="non")banishNon--;
           if(contamHit) contamTargets--;
           for(const j of satUndo) sparkSat[j] = false;
@@ -438,21 +454,23 @@ export function solve(counts, mods, opts = {}){
     placed.push({cat:"banishment", cells:pl.cells, gaps:pl.gaps, gapSet:pl.gapSet});
     sparkSat.push(false);
     coverage += pl.cells.length; emptyCells -= pl.cells.length; rem.banishment--;
-    banishIdx = 0; banishAdj = 0; banishNon = 0;
+    banishIdx = 0; banishAdj = 0; banishNon = 0; netherPlaced++;
     bt();
-    banishIdx = -1;
+    banishIdx = -1; netherPlaced--;
     placed.pop(); sparkSat.pop();
     coverage -= pl.cells.length; emptyCells += pl.cells.length;
     for(const [r,c] of pl.cells){ occ[r*COLS+c] = 0; pid[r*COLS+c] = -1; }
     potential -= MAXB.banishment;
-    bt();
+    if(!netherNeed) bt();
   }else{
     bt();
   }
+  const final = pick();
   return {
-    solution: best.sol, score: best.intrinsic + best.bonus, coverage: best.coverage,
-    bonus: best.bonus, intrinsic: best.intrinsic,
+    solution: final.sol, score: final.intrinsic + final.bonus, coverage: final.coverage,
+    bonus: final.bonus, intrinsic: final.intrinsic,
     iterations: iters, time: Math.round(performance.now()-t0), timedOut: capped,
+    banishBuffInactive: !!final.buffInactive,
   };
 }
 

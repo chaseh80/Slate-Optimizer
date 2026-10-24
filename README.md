@@ -23,7 +23,10 @@ but never at the cost of a mod:
 Nether King slots are fixed in-game, so the solved layout can be rotated 90° left/right with the buttons under the board.
 | Nether King's Divinity: Banishment | Locked in-game to one of the board's four outer diagonal edges (the solver uses the top-right edge; rotate the result for the others). +1 mod per **non-adjacent** slate; **hard constraint** — when placed, the solution must have at least 3 adjacent and at least 3 non-adjacent other slates |
 
-Only one Nether King's Divinity variant can be owned at a time.
+Only one Nether King's Divinity variant can be owned at a time. Like Pedigree, each
+variant has a **Require** toggle that forces it into the layout even when the score alone
+would leave it out. A required Banishment is placed even when its buff can't be reached
+(the app says so and explains why); an optional one is dropped in that case.
 
 Judgement and Contamination have configurable **Ultimate Nether King Talent Node** modifiers
 (⚙ on their inventory cards) that weight projection/buff values per slate type, so the solver

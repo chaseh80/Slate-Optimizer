@@ -5,7 +5,8 @@
       "PowerShell(npm --version)",
       "PowerShell(npm install)",
       "WebFetch(domain:api.github.com)",
-      "PowerShell(npm run build)"
+      "PowerShell(npm run build)",
+      "Bash(node C:/Users/Chase/AppData/Local/Temp/claude/C--Slate-Optimizer/31d2247e-265f-4ec4-ab66-4863157edb68/scratchpad/banish_check2.mjs)"
     ]
   }
 }

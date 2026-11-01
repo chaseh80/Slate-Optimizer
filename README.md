@@ -15,13 +15,20 @@ but never at the cost of a mod:
 | Fallen Starlight | 2 mods |
 | Corner of Divinity | 2 mods |
 | Pedigree of the Gods | Adjustable 0–3 (default 0) — its 1–2 mods are highly impactful but unscalable, so use the **Require** toggle on its card to force it into the layout instead of inflating its score. Cannot be copied *from* |
-| Sparks of Moth Fire | +1 mod (copies the last talent of one adjacent slate). Can never be placed adjacent to Prairie Ablaze; copiers can't copy other copiers |
-| Prairie Ablaze | +1 mod per distinct adjacent copyable slate (copies each one's *last* talent; max 4). Can never be placed adjacent to Sparks |
+| Sparks of Moth Fire | Copies the last talent of one adjacent slate: +1, or the Nether King's mod value when it copies a Nether King mod (it picks the most valuable neighbour). Can never be placed adjacent to Prairie Ablaze; copiers can't copy other copiers |
+| Prairie Ablaze | Copies the last talent of each adjacent slate (max 4): +1 each, or the Nether King's mod value for a Nether King mod. Each touching cell of a full-size Nether King is its own node, so touching two of its cells copies two mods. Can never be placed adjacent to Sparks |
+| Nether King's Divinity (any) | Every square holds its own mod, worth 0–5 (default 2) both on the board and when Sparks or Prairie copy it. A 1×1 has one mod (the **Mod value** stepper). A full-size piece has three: **Edit** on its card opens a picture of the piece where you set each square's value, and the result board shows those values on the placed piece |
 | Nether King's Divinity: Judgement | Baseline +40% effect for every distinct slate on its lines (✦): buffed slate's weight × 0.40, with the +10% (Corner/Starlight) and +10% (non-legendary) nodes stacking on top. E.g. Normal on a line = +2, or +2.5 with the node |
-| Nether King's Divinity: Contamination | Projects **all its talents at 12% strength** into each slate in its effect area, including the 1×1 legendaries (Spark, Prairie) — set its baseline talent value on the card (default 1, so 5 targets = +0.6). Its nodes multiply each projection (+100% Pedigree, etc.); the Statue node's +30% only counts if the final board has an empty slot; one node extends reach to diagonals |
-
-Nether King slots are fixed in-game, so the solved layout can be rotated 90° left/right with the buttons under the board.
+| Nether King's Divinity: Contamination | Projects **all its talents at 12% strength** into each slate in its effect area, including the 1×1 legendaries (Spark, Prairie). Each projection is 12% of its three mods' total (default 6, so 5 targets = +3.6). Its nodes multiply each projection (+100% Pedigree, etc.); the Statue node's +30% only counts if the final board has an empty slot; one node extends reach to diagonals |
 | Nether King's Divinity: Banishment | Locked in-game to one of the board's four outer diagonal edges (the solver uses the top-right edge; rotate the result for the others). +1 mod per **non-adjacent** slate; **hard constraint** — when placed, the solution must have at least 3 adjacent and at least 3 non-adjacent other slates |
+
+Each Nether King card has a **Full size / 1×1** switch. A 1×1 counts only for its own
+mods (no Authority Effect, so its ⚙ talent nodes are hidden) and can only go in its
+fixed slots: Banishment on the 4 outer tips, Judgement on the ends of the two 4-wide
+rows, Contamination on any non-edge cell.
+
+Nether King slots are fixed in-game, so the solved layout can be rotated 90° left/right
+with the buttons under the board.
 
 Only one Nether King's Divinity variant can be owned at a time. Like Pedigree, each
 variant has a **Require** toggle that forces it into the layout even when the score alone

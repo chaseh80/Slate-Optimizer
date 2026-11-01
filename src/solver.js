@@ -18,13 +18,29 @@ const BASE_SHAPES = {
   starlight:     { cells: [[0,0],[1,0]] },
   spark:         { cells: [[0,0]] },
   prairie:       { cells: [[0,0]] },
+  // Full-size Nether Kings: the third entry of each cell is its mod index (0–2),
+  // since every cell carries its own copyable mod.
   // Judgement: three 1x1s at corners of an L — X··X across, two gaps down, X.
   // The 4 gap cells between them are the "lines" that buff whatever covers them.
-  judgement:     { cells: [[0,0],[0,3],[3,3]], gaps: [[0,1],[0,2],[1,3],[2,3]] },
-  contamination: { cells: [[0,0],[0,1],[0,2]] },
-  banishment:    { cells: [[0,0],[1,1],[2,2]] }, // three 1x1s stacked diagonally
+  judgement:     { cells: [[0,0,0],[0,3,1],[3,3,2]], gaps: [[0,1],[0,2],[1,3],[2,3]] },
+  contamination: { cells: [[0,0,0],[0,1,1],[0,2,2]] },
+  banishment:    { cells: [[0,0,0],[1,1,1],[2,2,2]] }, // three 1x1s stacked diagonally; mod 3 is the ◈ anchor
+  // 1x1 Nether Kings: used for their implicits only — no Authority Effect.
+  judgement1:    { cells: [[0,0]] },
+  contamination1:{ cells: [[0,0]] },
+  banishment1:   { cells: [[0,0]] },
 };
+// Full-size Nether King shapes, for drawing the per-mod value editor.
+export const NETHER_FULL_SHAPES = Object.fromEntries(
+  ["judgement","contamination","banishment"].map(c=>[c, BASE_SHAPES[c]]));
 const BANISH_SLOT = [[0,3],[1,4],[2,5]]; // top-right outer edge
+// Fixed slots the game allows for each 1x1 Nether King.
+const SLOTS_1X1 = {
+  banishment1:    [[0,2],[2,5],[3,0],[5,3]],                       // outer tips
+  judgement1:     [[1,1],[1,4],[4,1],[4,4]],                       // ends of the 4-wide rows
+  contamination1: [[1,2],[1,3],[2,1],[2,2],[2,3],[2,4],
+                   [3,1],[3,2],[3,3],[3,4],[4,2],[4,3]],           // every non-edge cell
+};
 const NORMAL_BASES = [
   [[0,0],[0,1],[1,0],[1,1]],       // O
   [[0,0],[0,1],[0,2],[1,1]],       // T
@@ -32,13 +48,18 @@ const NORMAL_BASES = [
   [[0,1],[1,1],[2,0],[2,1]],       // J
 ];
 
-export const PIECE_SIZE = {pedigree:7,normal:4,corner:3,starlight:2,spark:1,prairie:1,judgement:3,contamination:3,banishment:3};
-export const PIECE_MAX  = {pedigree:1,normal:6,corner:3,starlight:3,spark:3,prairie:1,judgement:1,contamination:1,banishment:1};
-export const NETHER = ["judgement","contamination","banishment"]; // max 1 combined
+export const NETHER = ["judgement","contamination","banishment"]; // max 1 combined (either size)
+export const NETHER_1X1 = {judgement:"judgement1", contamination:"contamination1", banishment:"banishment1"};
+const NETHER_ALL = [...NETHER, ...Object.values(NETHER_1X1)];
+export const PIECE_SIZE = {pedigree:7,normal:4,corner:3,starlight:2,spark:1,prairie:1,judgement:3,contamination:3,banishment:3,
+                           judgement1:1,contamination1:1,banishment1:1};
+export const PIECE_MAX  = {pedigree:1,normal:6,corner:3,starlight:3,spark:3,prairie:1,judgement:1,contamination:1,banishment:1,
+                           judgement1:1,contamination1:1,banishment1:1};
 export const COLORS = {
   pedigree:"#c084fc", normal:"#60a5fa", corner:"#f1c40f", starlight:"#1abc9c",
   spark:"#e74c3c", prairie:"#ff6b35",
   judgement:"#d946ef", contamination:"#ec4899", banishment:"#818cf8",
+  judgement1:"#d946ef", contamination1:"#ec4899", banishment1:"#818cf8",
 };
 export const PIECE_LABELS = {
   pedigree:"Pedigree of the Gods", normal:"Normal Slate", corner:"Corner of Divinity",
@@ -46,14 +67,22 @@ export const PIECE_LABELS = {
   judgement:"Nether King's Divinity: Judgement",
   contamination:"Nether King's Divinity: Contamination",
   banishment:"Nether King's Divinity: Banishment",
+  judgement1:"Nether King's Divinity: Judgement (1×1)",
+  contamination1:"Nether King's Divinity: Contamination (1×1)",
+  banishment1:"Nether King's Divinity: Banishment (1×1)",
 };
 export const PIECE_DESC = {
   pedigree:"Cannot be copied from",
-  spark:"Copies the last talent of one adjacent slate (+1 mod)",
-  prairie:"Copies the last talent of each adjacent slate (+1 each, max 4)",
+  spark:"Copies the last talent of one adjacent slate (+1, or a Nether King mod's value)",
+  prairie:"Copies the last talent of each adjacent slate (+1 each, or a Nether King mod's value; max 4)",
   judgement:"Buffs slates on its lines: +40% effect, talent nodes add more (⚙)",
   contamination:"Projects its talents at 12% strength into each touching slate (⚙)",
   banishment:"Locked to an outer diagonal edge. Buff at 3+ adj & 3+ non-adj: +1 mod per non-adjacent slate",
+};
+export const PIECE_DESC_1X1 = {
+  judgement:"One strong mod · 1×1 at the ends of the 4-wide rows · no Authority Effect",
+  contamination:"One strong mod · 1×1 on any non-edge cell · no Authority Effect",
+  banishment:"One strong mod · 1×1 on the 4 outer tips · no Authority Effect",
 };
 
 /* ───── Nether King modifiers (Ultimate Nether King Talent Nodes) ───── */
@@ -79,11 +108,10 @@ export const EMPTY_MODS = Object.fromEntries(
    Each slate type carries an intrinsic mod count; synergies add mods on top.
    Coverage is only a tie-breaker (COVER_EPS per covered cell), so a slate is
    always worth placing but never at the cost of a single mod. */
-export const SPARK_COPY_VALUE = 1;    // Spark copies the LAST talent = 1 mod
-export const PRAIRIE_COPY_VALUE = 1;  // Prairie copies the LAST talent of each adjacent slate (max 4)
+// Spark copies the last talent of one adjacent slate; Prairie copies the last
+// talent of each adjacent slate (max 4). See copyValueTable for what a copy is worth.
+export const COPY_VALUE = 1;
 export const CONTAM_PCT = 0.12;       // Contamination projects ALL its talents at 12% strength per target (−88% projection)
-export const DEFAULT_CONTAM_VALUE = 1;// baseline talent value of the Contamination slate itself (adjustable)
-export const MAX_CONTAM_VALUE = 5;
 export const JUDGE_BASE_PCT = 0.40;   // Judgement baseline: +40% effect for every slate on its lines
 export const JUDGE_NODE_CS_PCT = 0.10;     // talent node: Corner/Starlight on the link
 export const JUDGE_NODE_NONLEG_PCT = 0.10; // talent node: non-legendary (Normal) on the link
@@ -96,22 +124,48 @@ export const MAX_PEDIGREE_VALUE = 3;
 // Normal slates can roll up to 5 mods but often carry fewer good ones — adjustable 1–5.
 export const DEFAULT_NORMAL_VALUE = 5;
 export const MIN_NORMAL_VALUE = 1, MAX_NORMAL_VALUE = 5;
-export function modValueTable(pedigreeVal = DEFAULT_PEDIGREE_VALUE, normalVal = DEFAULT_NORMAL_VALUE){
-  return {pedigree:pedigreeVal, normal:normalVal, starlight:2, corner:2,
-          spark:0, prairie:0, judgement:0, contamination:0, banishment:0};
+// What one Nether King mod is worth (on the board and when copied). A 1×1 has
+// one mod (netherVal); a full-size piece has one mod per cell (nodeVals[cat]).
+export const DEFAULT_NETHER_VALUE = 2;
+export const MAX_NETHER_VALUE = 5;
+export const DEFAULT_NODE_VALS = Object.fromEntries(NETHER.map(c=>[c, [2,2,2]]));
+const sum = a=>a.reduce((s,v)=>s+v, 0);
+export function modValueTable(pedigreeVal = DEFAULT_PEDIGREE_VALUE, normalVal = DEFAULT_NORMAL_VALUE,
+                              netherVal = DEFAULT_NETHER_VALUE, nodeVals = DEFAULT_NODE_VALS){
+  const t = {pedigree:pedigreeVal, normal:normalVal, starlight:2, corner:2, spark:0, prairie:0};
+  for(const c of NETHER) t[c] = sum(nodeVals[c]);
+  for(const c of Object.values(NETHER_1X1)) t[c] = netherVal;
+  return t;
 }
-// Pedigree and Nether King slates can't be copied from, and neither can the
-// copiers themselves (Spark/Prairie). Judgement's lines don't buff the 1x1
-// copiers, but Contamination CAN project into them.
-export const CAN_COPY_FROM = {pedigree:false,normal:true,corner:true,starlight:true,spark:false,prairie:false,judgement:false,contamination:false,banishment:false};
-export const CAN_BE_BUFFED = {pedigree:true,normal:true,corner:true,starlight:true,spark:false,prairie:false,judgement:true,contamination:true,banishment:true};
-export const CONTAM_TARGET = {pedigree:true,normal:true,corner:true,starlight:true,spark:true,prairie:true,judgement:true,contamination:true,banishment:true};
+// Pedigree can't be copied from, and neither can the copiers themselves
+// (Spark/Prairie). Judgement's lines don't buff the copiers, but
+// Contamination CAN project into them.
+export const CAN_COPY_FROM = {pedigree:false,normal:true,corner:true,starlight:true,spark:false,prairie:false};
+export const CAN_BE_BUFFED = {pedigree:true,normal:true,corner:true,starlight:true,spark:false,prairie:false};
+export const CONTAM_TARGET = {pedigree:true,normal:true,corner:true,starlight:true,spark:true,prairie:true};
+for(const c of NETHER_ALL){ CAN_COPY_FROM[c] = true; CAN_BE_BUFFED[c] = true; CONTAM_TARGET[c] = true; }
+// Each cell of a full-size Nether King is its own node, so a Prairie touching
+// two of its cells copies two talents.
+const MULTI_NODE = {judgement:true, contamination:true, banishment:true};
 // Solver try-order: big coverage pieces first, specials after.
-export const CAT_ORDER = ["pedigree","normal","corner","starlight","judgement","contamination","banishment","spark","prairie"];
+export const CAT_ORDER = ["pedigree","normal","corner","starlight","judgement","contamination","banishment",
+                          "judgement1","contamination1","banishment1","spark","prairie"];
+
+/* Worth of one talent copied from each slate type: a 1×1 Nether King's mod is
+   worth its mod value; any other slate's last talent is worth COPY_VALUE.
+   Full-size Nether Kings are copied per cell — see cellCopyValues. */
+export function copyValueTable(netherVal = DEFAULT_NETHER_VALUE){
+  const t = {};
+  for(const c of CAT_ORDER){
+    t[c] = !CAN_COPY_FROM[c] || MULTI_NODE[c] ? 0
+         : NETHER_ALL.includes(c) ? netherVal : COPY_VALUE;
+  }
+  return t;
+}
 
 /* Per-slate-type value of one Contamination projection, given active modifiers.
    Non-legendary = Normal Slate (Starlight/Corner count as legendary). */
-export function contamValueTable(mods, contamWorth = DEFAULT_CONTAM_VALUE){
+export function contamValueTable(mods, contamWorth = DEFAULT_NETHER_VALUE){
   // Each projection = 12% of Contamination's own talent value, scaled by nodes.
   // Statue node is NOT in this table — it's conditional on the final board
   // having an empty slot, so the solver adds it at evaluation time.
@@ -144,23 +198,25 @@ export function judgeValueTable(mods, modVal){
   return t;
 }
 
-/* ───── Orientation helpers (cells + gaps rotate/flip together) ───── */
+/* ───── Orientation helpers (cells + gaps rotate/flip together) ─────
+   A cell may carry extra entries after [r,c] (a full-size Nether King's mod
+   index); they ride along unchanged. */
 const cmp = (a,b)=>a[0]-b[0]||a[1]-b[1];
 function normMeta(s){
   const all = s.cells.concat(s.gaps);
   const mr = Math.min(...all.map(p=>p[0])), mc = Math.min(...all.map(p=>p[1]));
   return {
-    cells: s.cells.map(([r,c])=>[r-mr,c-mc]).sort(cmp),
+    cells: s.cells.map(([r,c,...x])=>[r-mr,c-mc,...x]).sort(cmp),
     gaps:  s.gaps.map(([r,c])=>[r-mr,c-mc]).sort(cmp),
   };
 }
 function rotMeta(s){
-  return normMeta({cells:s.cells.map(([r,c])=>[c,-r]), gaps:s.gaps.map(([r,c])=>[c,-r])});
+  return normMeta({cells:s.cells.map(([r,c,...x])=>[c,-r,...x]), gaps:s.gaps.map(([r,c])=>[c,-r])});
 }
 function flipMeta(s){
   const all = s.cells.concat(s.gaps);
   const mx = Math.max(...all.map(p=>p[1]));
-  return normMeta({cells:s.cells.map(([r,c])=>[r,mx-c]), gaps:s.gaps.map(([r,c])=>[r,mx-c])});
+  return normMeta({cells:s.cells.map(([r,c,...x])=>[r,mx-c,...x]), gaps:s.gaps.map(([r,c])=>[r,mx-c])});
 }
 function orientationsMeta(base){
   const start = normMeta({cells:base.cells, gaps:base.gaps||[]});
@@ -182,13 +238,20 @@ function computeAllPlacements(){
   const plc = {};
   const add = (cat, oris) => {
     plc[cat] = plc[cat] || [];
+    const seenCells = new Set();
     for(const ori of oris){
       for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
         const cells = ori.cells.map(([dr,dc])=>[r+dr,c+dc]);
         if(!cells.every(([ar,ac])=>VALID_SET.has(`${ar},${ac}`)))continue;
         // Gap cells that fall off the board simply don't count as buffable.
         const gaps = ori.gaps.map(([dr,dc])=>[r+dr,c+dc]).filter(([ar,ac])=>VALID_SET.has(`${ar},${ac}`));
-        plc[cat].push({cells, gaps, gapSet:new Set(gaps.map(([gr,gc])=>gr*COLS+gc))});
+        // nodes[k] = which of a full-size Nether King's mods sits on cells[k].
+        const nodes = ori.cells[0].length>2 ? ori.cells.map(x=>x[2]) : null;
+        // Same cells as an earlier placement with only the mods swapped around:
+        // skippable whenever all of the piece's mods are worth the same.
+        const key = JSON.stringify(cells)+JSON.stringify(gaps);
+        const canonical = !seenCells.has(key); seenCells.add(key);
+        plc[cat].push({cells, gaps, gapSet:new Set(gaps.map(([gr,gc])=>gr*COLS+gc)), nodes, canonical});
       }
     }
   };
@@ -203,8 +266,14 @@ function computeAllPlacements(){
   // Banishment is locked in-game to the board's four outer diagonal edges. The
   // board is 4-fold rotationally symmetric, so trying only the top-right edge
   // loses no layouts — the other three edges are rotations of any result.
+  // Its orientation on the edge is fixed too: the ◈ anchor (mod 3) sits at the tip.
   const slotKey = JSON.stringify(BANISH_SLOT);
-  plc.banishment = plc.banishment.filter(p=>JSON.stringify(p.cells)===slotKey);
+  plc.banishment = plc.banishment.filter(p=>JSON.stringify(p.cells)===slotKey && JSON.stringify(p.nodes)==="[0,1,2]");
+  plc.banishment[0].canonical = true;
+  for(const [cat, slots] of Object.entries(SLOTS_1X1)){
+    const ok = new Set(slots.map(([r,c])=>r*COLS+c));
+    plc[cat] = plc[cat].filter(p=>ok.has(p.cells[0][0]*COLS+p.cells[0][1]));
+  }
   return plc;
 }
 
@@ -234,30 +303,39 @@ export const DIRS8 = [...DIRS,[1,1],[1,-1],[-1,1],[-1,-1]];
    Banishment, when placed, is a hard constraint: at least BANISH_MIN adjacent and
    at least BANISH_MIN non-adjacent other slates — solutions violating it are never recorded.
    Spark and Prairie may never be placed adjacent to each other. */
-export function solve(counts, mods, opts = {}){
+export function solve(inputCounts, mods, opts = {}){
   const {
     pedigreeVal = DEFAULT_PEDIGREE_VALUE,
     normalVal = DEFAULT_NORMAL_VALUE,
-    contamWorth = DEFAULT_CONTAM_VALUE,
+    netherVal = DEFAULT_NETHER_VALUE,
+    nodeVals = DEFAULT_NODE_VALS,
     requirePedigree = false,
     requireNether = false,
     maxIters = 25_000_000,
     onProgress = null,
   } = opts;
+  const counts = Object.fromEntries(CAT_ORDER.map(c=>[c, inputCounts[c]||0]));
   const occ = new Int8Array(ROWS*COLS).fill(-1); // -1 off-board, 0 empty, 1 filled, 2 skipped
   const pid = new Int16Array(ROWS*COLS).fill(-1);
+  const cellCopy = new Float64Array(ROWS*COLS); // value of copying the talent on each occupied cell
   for(const [r,c] of VALID) occ[r*COLS+c] = 0;
 
-  const modVal = modValueTable(pedigreeVal, normalVal);
+  const modVal = modValueTable(pedigreeVal, normalVal, netherVal, nodeVals);
+  const contamWorth = modVal.contamination; // projects ALL its mods
   const contamVal = contamValueTable(mods, contamWorth);
   const judgeVal = judgeValueTable(mods, modVal);
+  const copyVal = copyValueTable(netherVal);
+  // Mods on a full-size piece's cells all equal ⇒ placements that only swap them are redundant.
+  const sameNodes = Object.fromEntries(NETHER.map(c=>[c, nodeVals[c].every(v=>v===nodeVals[c][0])]));
+  const maxCopy = Math.max(0, ...CAT_ORDER.filter(c=>counts[c]>0)
+    .map(c=>MULTI_NODE[c] ? Math.max(...nodeVals[c]) : copyVal[c]));
   const statueAdd = contamWorth*CONTAM_PCT*0.30; // per target, only when board has an empty slot
   const CDIRS = mods.c_diag ? DIRS8 : DIRS; // Contamination effect-area reach
   const contamMaxTargets = mods.c_diag ? 12 : 8;
   const otherPieceCount = CAT_ORDER.reduce((s,c)=>s+(c==="banishment"?0:(counts[c]||0)), 0);
   const MAXB = {
-    spark:SPARK_COPY_VALUE,
-    prairie:4*PRAIRIE_COPY_VALUE,
+    spark:maxCopy,
+    prairie:4*maxCopy,
     // Banishment is worth 1 per non-adjacent slate — at most every other piece.
     banishment:otherPieceCount,
     contamination:contamMaxTargets*(Math.max(...Object.values(contamVal)) + (mods.c_statue?statueAdd:0)),
@@ -267,14 +345,14 @@ export function solve(counts, mods, opts = {}){
 
   const pedigreeNeed = requirePedigree && (counts.pedigree||0)>0;
   let pedigreePlaced = 0;
-  const netherNeed = requireNether && NETHER.some(c=>(counts[c]||0)>0);
+  const netherNeed = requireNether && NETHER_ALL.some(c=>counts[c]>0);
   let netherPlaced = 0;
 
   const rem = {...counts};
   let coverage = 0, bonus = 0, intrinsic = 0, emptyCells = TOTAL;
   // Optimistic upper bound on synergy bonus still obtainable (pooled per-piece maxima).
   let potential = CAT_ORDER.reduce((s,c)=>s+(counts[c]||0)*MAXB[c], 0);
-  const placed = [], sparkSat = [];
+  const placed = [], sparkBest = []; // sparkBest[i]: value of the best talent Spark i copies
   let banishIdx = -1, banishAdj = 0, banishNon = 0, judgeIdx = -1;
   let contamIdx = -1, contamEff = null; // effect-area cell set of placed Contamination
   let contamTargets = 0; // distinct projection targets of placed Contamination
@@ -289,6 +367,32 @@ export function solve(counts, mods, opts = {}){
   // Optimistic value of every still-unplaced piece: its intrinsic mods
   // plus the coverage tie-breaker for its cells.
   const remValue = ()=>CAT_ORDER.reduce((s,c)=>s+rem[c]*(modVal[c]+COVER_EPS*PIECE_SIZE[c]), 0);
+
+  function occupy(cat, pl, id){
+    pl.cells.forEach(([r,c],k)=>{
+      const idx = r*COLS+c;
+      occ[idx] = 1; pid[idx] = id;
+      cellCopy[idx] = pl.nodes ? nodeVals[cat][pl.nodes[k]] : copyVal[cat];
+    });
+    placed.push({cat, cells:pl.cells, gaps:pl.gaps, gapSet:pl.gapSet, nodes:pl.nodes});
+  }
+  function vacate(pl){
+    for(const [r,c] of pl.cells){ const idx = r*COLS+c; occ[idx] = 0; pid[idx] = -1; cellCopy[idx] = 0; }
+  }
+  function neighborCells([r,c]){
+    const out = [];
+    for(const [dr,dc] of DIRS){
+      const rr = r+dr, cc = c+dc;
+      if(rr>=0&&rr<ROWS&&cc>=0&&cc<COLS) out.push(rr*COLS+cc);
+    }
+    return out;
+  }
+  // Copy values of the cells in `cells` that touch the single cell [r,c].
+  function touchingValues(cells, [r,c]){
+    const out = [];
+    for(const [a,b] of cells) if(Math.abs(a-r)+Math.abs(b-c)===1) out.push(cellCopy[a*COLS+b]);
+    return out;
+  }
 
   function neighborIds(cells){
     const s = new Set();
@@ -319,11 +423,11 @@ export function solve(counts, mods, opts = {}){
     const pedigreeOk = !pedigreeNeed || pedigreePlaced>0;
     const netherOk = !netherNeed || netherPlaced>0;
     if(banishOk && pedigreeOk && netherOk && score>best.score){
-      best = {score, sol:placed.map(p=>({cat:p.cat, cells:p.cells, gaps:p.gaps})), coverage, bonus:bonus+extra, intrinsic};
+      best = {score, sol:placed.map(p=>({cat:p.cat, cells:p.cells, gaps:p.gaps, nodes:p.nodes})), coverage, bonus:bonus+extra, intrinsic};
     }else if(!banishOk && netherNeed && pedigreeOk && best.sol.length===0){
       const s = score - banishNon; // buff inactive: no per-non-adjacent value
       if(!fallback || s>fallback.score){
-        fallback = {score:s, sol:placed.map(p=>({cat:p.cat, cells:p.cells, gaps:p.gaps})), coverage,
+        fallback = {score:s, sol:placed.map(p=>({cat:p.cat, cells:p.cells, gaps:p.gaps, nodes:p.nodes})), coverage,
                     bonus:bonus+extra-banishNon, intrinsic, buffInactive:true};
       }
     }
@@ -341,6 +445,7 @@ export function solve(counts, mods, opts = {}){
         if(!rem[cat] || !opts[cat])continue;
         for(const pi of opts[cat]){
           const pl = ALL_PLC[cat][pi];
+          if(!pl.canonical && sameNodes[cat])continue;
           let ok = true;
           for(const [r,c] of pl.cells) if(occ[r*COLS+c]!==0){ ok = false; break; }
           if(!ok)continue;
@@ -356,19 +461,27 @@ export function solve(counts, mods, opts = {}){
 
           /* ── place ── */
           const id = placed.length;
-          for(const [r,c] of pl.cells){ occ[r*COLS+c] = 1; pid[r*COLS+c] = id; }
-          placed.push({cat, cells:pl.cells, gaps:pl.gaps, gapSet:pl.gapSet});
-          sparkSat.push(false);
+          occupy(cat, pl, id);
+          sparkBest.push(0);
           coverage += pl.cells.length; emptyCells -= pl.cells.length; rem[cat]--;
 
           let d = 0;
           const satUndo = [];
           // Own synergy at placement time
           if(cat==="spark"){
-            for(const j of nbrs) if(CAN_COPY_FROM[placed[j].cat]){ d += SPARK_COPY_VALUE; sparkSat[id] = true; break; }
+            // Spark copies the single most valuable talent it touches.
+            let b = 0;
+            for(const idx of neighborCells(pl.cells[0])) if(pid[idx]>=0) b = Math.max(b, cellCopy[idx]);
+            d += b; sparkBest[id] = b;
           }else if(cat==="prairie"){
-            // Prairie copies the LAST talent of each adjacent copyable slate (1 mod each).
-            for(const j of nbrs) if(CAN_COPY_FROM[placed[j].cat]) d += PRAIRIE_COPY_VALUE;
+            // Prairie copies the LAST talent of each adjacent copyable slate;
+            // each touching cell of a full-size Nether King is a separate mod.
+            const seen = new Set();
+            for(const idx of neighborCells(pl.cells[0])){
+              const j = pid[idx];
+              if(j<0 || !CAN_COPY_FROM[placed[j].cat])continue;
+              if(MULTI_NODE[placed[j].cat] || !seen.has(j)){ seen.add(j); d += cellCopy[idx]; }
+            }
           }else if(cat==="contamination"){
             contamIdx = id;
             const eff = new Set();
@@ -395,8 +508,16 @@ export function solve(counts, mods, opts = {}){
           // Synergy granted to already-placed specials
           for(const j of nbrs){
             const jc = placed[j].cat;
-            if(jc==="spark" && !sparkSat[j] && CAN_COPY_FROM[cat]){ sparkSat[j] = true; satUndo.push(j); d += SPARK_COPY_VALUE; }
-            else if(jc==="prairie" && CAN_COPY_FROM[cat]) d += PRAIRIE_COPY_VALUE;
+            if(jc!=="spark" && jc!=="prairie")continue;
+            const vals = touchingValues(pl.cells, placed[j].cells[0]);
+            if(jc==="spark"){
+              // A Spark switches to this slate's talent if it's worth more than its current copy.
+              const v = Math.max(...vals);
+              if(v>sparkBest[j]){ satUndo.push([j, sparkBest[j]]); d += v-sparkBest[j]; sparkBest[j] = v; }
+            }else if(CAN_COPY_FROM[cat]){
+              // Prairie takes one talent from a slate, or one per touching full-size Nether King cell.
+              d += MULTI_NODE[cat] ? sum(vals) : vals[0];
+            }
           }
           let contamHit = false;
           if(contamIdx>=0 && contamIdx!==id && contamVal[cat]>0){
@@ -417,23 +538,23 @@ export function solve(counts, mods, opts = {}){
           }
           bonus += d; potential -= d; intrinsic += modVal[cat];
           if(cat==="pedigree") pedigreePlaced++;
-          if(cat==="judgement"||cat==="contamination") netherPlaced++;
+          if(cat!=="banishment" && NETHER_ALL.includes(cat)) netherPlaced++;
 
           bt();
 
           /* ── unplace ── */
           bonus -= d; potential += d; intrinsic -= modVal[cat];
           if(cat==="pedigree") pedigreePlaced--;
-          if(cat==="judgement"||cat==="contamination") netherPlaced--;
+          if(cat!=="banishment" && NETHER_ALL.includes(cat)) netherPlaced--;
           if(banishDelta==="adj")banishAdj--; else if(banishDelta==="non")banishNon--;
           if(contamHit) contamTargets--;
-          for(const j of satUndo) sparkSat[j] = false;
+          for(const [j,prev] of satUndo) sparkBest[j] = prev;
           if(cat==="judgement") judgeIdx = -1;
           if(cat==="contamination"){ contamIdx = -1; contamEff = null; contamTargets = 0; }
           if(cat==="banishment"){ banishIdx = -1; banishAdj = 0; banishNon = 0; }
           rem[cat]++; coverage -= pl.cells.length; emptyCells += pl.cells.length;
-          placed.pop(); sparkSat.pop();
-          for(const [r,c] of pl.cells){ occ[r*COLS+c] = 0; pid[r*COLS+c] = -1; }
+          placed.pop(); sparkBest.pop();
+          vacate(pl);
           if(capped)return;
         }
       }
@@ -450,16 +571,15 @@ export function solve(counts, mods, opts = {}){
     // otherwise the budget is spent on Banishment-less layouts before the scan
     // ever reaches its slot. Then fall back to layouts without it.
     const pl = ALL_PLC.banishment[0];
-    for(const [r,c] of pl.cells){ occ[r*COLS+c] = 1; pid[r*COLS+c] = 0; }
-    placed.push({cat:"banishment", cells:pl.cells, gaps:pl.gaps, gapSet:pl.gapSet});
-    sparkSat.push(false);
+    occupy("banishment", pl, 0);
+    sparkBest.push(0);
     coverage += pl.cells.length; emptyCells -= pl.cells.length; rem.banishment--;
-    banishIdx = 0; banishAdj = 0; banishNon = 0; netherPlaced++;
+    banishIdx = 0; banishAdj = 0; banishNon = 0; netherPlaced++; intrinsic += modVal.banishment;
     bt();
-    banishIdx = -1; netherPlaced--;
-    placed.pop(); sparkSat.pop();
+    banishIdx = -1; netherPlaced--; intrinsic -= modVal.banishment;
+    placed.pop(); sparkBest.pop();
     coverage -= pl.cells.length; emptyCells += pl.cells.length;
-    for(const [r,c] of pl.cells){ occ[r*COLS+c] = 0; pid[r*COLS+c] = -1; }
+    vacate(pl);
     potential -= MAXB.banishment;
     if(!netherNeed) bt();
   }else{
@@ -479,16 +599,28 @@ export function analyzeSolution(sol, mods, opts = {}){
   const {
     pedigreeVal = DEFAULT_PEDIGREE_VALUE,
     normalVal = DEFAULT_NORMAL_VALUE,
-    contamWorth = DEFAULT_CONTAM_VALUE,
+    netherVal = DEFAULT_NETHER_VALUE,
+    nodeVals = DEFAULT_NODE_VALS,
   } = opts;
-  const empty = {items:[], gapAll:new Set(), gapCovered:new Set(), pieceNotes:{}, pieceTags:{}};
+  const empty = {items:[], gapAll:new Set(), gapCovered:new Set(), pieceNotes:{}, pieceTags:{}, cellMods:{}};
   if(!sol || !sol.length)return empty;
-  const modVal = modValueTable(pedigreeVal, normalVal);
-  const contamVal = contamValueTable(mods, contamWorth);
+  const modVal = modValueTable(pedigreeVal, normalVal, netherVal, nodeVals);
+  const contamVal = contamValueTable(mods, modVal.contamination);
   const judgeVal = judgeValueTable(mods, modVal);
-  const statueAdd = contamWorth*CONTAM_PCT*0.30;
+  const copyVal = copyValueTable(netherVal);
+  const statueAdd = modVal.contamination*CONTAM_PCT*0.30;
   const pid = {};
-  sol.forEach((p,i)=>p.cells.forEach(([r,c])=>{ pid[`${r},${c}`] = i; }));
+  // Copy value of each occupied cell; cellMods labels each full-size Nether King cell.
+  const cv = {}, cellMods = {};
+  sol.forEach((p,i)=>p.cells.forEach(([r,c],k)=>{
+    const key = `${r},${c}`;
+    pid[key] = i;
+    if(p.nodes && MULTI_NODE[p.cat]){
+      const n = p.nodes[k];
+      cv[key] = nodeVals[p.cat][n];
+      cellMods[key] = {n:n+1, value:cv[key], anchor:p.cat==="banishment" && n===2};
+    }else cv[key] = copyVal[p.cat];
+  }));
   const neighborIds = (cells, self, dirs=DIRS)=>{
     const s = new Set();
     for(const [r,c] of cells)for(const [dr,dc] of dirs){
@@ -504,21 +636,31 @@ export function analyzeSolution(sol, mods, opts = {}){
   const addTag = (i,t)=>{ (pieceTags[i] = pieceTags[i]||[]).push(t); };
   sol.forEach((p,i)=>{
     const nbrs = [...neighborIds(p.cells, i)];
+    // Names a copied talent: the slate, plus which mod for a full-size Nether King.
+    const source = key=>PIECE_LABELS[sol[pid[key]].cat] + (cellMods[key] ? ` mod ${cellMods[key].n}` : "");
+    const [pr,pc] = p.cells[0];
+    const touching = DIRS.map(([dr,dc])=>`${pr+dr},${pc+dc}`)
+      .filter(key=>pid[key]!==undefined && CAN_COPY_FROM[sol[pid[key]].cat]);
     if(p.cat==="spark"){
-      const copyable = nbrs.filter(j=>CAN_COPY_FROM[sol[j].cat]);
-      const ok = copyable.length>0;
-      pieceNotes[i] = ok ? `Copies ${PIECE_LABELS[sol[copyable[0]].cat]} (+${SPARK_COPY_VALUE} mod)` : "No copyable neighbor";
+      // Spark picks the most valuable talent it touches.
+      const src = touching.sort((a,b)=>cv[b]-cv[a])[0];
+      const ok = src!==undefined;
+      const what = ok ? `${source(src)} (+${fmt(cv[src])} mod)` : "";
+      pieceNotes[i] = ok ? `Copies ${what}` : "No copyable neighbor";
       items.push({ok, cat:p.cat,
-        text: ok
-          ? `Sparks of Moth Fire copies ${PIECE_LABELS[sol[copyable[0]].cat]} (+${SPARK_COPY_VALUE} mod)`
-          : "Sparks of Moth Fire has no copyable neighbor"});
+        text: ok ? `Sparks of Moth Fire copies ${what}` : "Sparks of Moth Fire has no copyable neighbor"});
     }else if(p.cat==="prairie"){
-      const copyable = nbrs.filter(j=>CAN_COPY_FROM[sol[j].cat]);
-      const val = copyable.length*PRAIRIE_COPY_VALUE;
-      pieceNotes[i] = `Copies the last talent of ${copyable.length} adjacent slate${copyable.length===1?"":"s"} (+${fmt(val)} mods)`;
-      items.push({ok:copyable.length>0, cat:p.cat,
-        text: `Prairie Ablaze copies the last talent of ${copyable.length} adjacent slate${copyable.length===1?"":"s"}`
-          + (copyable.length ? ` (+${fmt(val)} mods: ${copyable.map(j=>PIECE_LABELS[sol[j].cat]).join(", ")})` : "")});
+      // One talent per adjacent slate, or per touching cell of a full-size Nether King.
+      const seen = new Set(), copied = [];
+      for(const key of touching){
+        const j = pid[key];
+        if(MULTI_NODE[sol[j].cat] || !seen.has(j)){ seen.add(j); copied.push(key); }
+      }
+      const n = copied.length, val = copied.reduce((s,key)=>s+cv[key], 0);
+      pieceNotes[i] = `Copies ${n} talent${n===1?"":"s"} from adjacent slates (+${fmt(val)} mods)`;
+      items.push({ok:n>0, cat:p.cat,
+        text: `Prairie Ablaze copies ${n} talent${n===1?"":"s"} from adjacent slates`
+          + (n ? ` (+${fmt(val)} mods: ${copied.map(source).join(", ")})` : "")});
     }else if(p.cat==="contamination"){
       const reach = mods.c_diag ? DIRS8 : DIRS;
       const targets = [...neighborIds(p.cells, i, reach)].filter(j=>contamVal[sol[j].cat]>0);
@@ -555,5 +697,5 @@ export function analyzeSolution(sol, mods, opts = {}){
         text: `Banishment: ${adj} adjacent / ${non} non-adjacent slates${ok?` — buff active (+${non} mods, 1 per non-adjacent)`:""}`});
     }
   });
-  return {items, gapAll, gapCovered, pieceNotes, pieceTags};
+  return {items, gapAll, gapCovered, pieceNotes, pieceTags, cellMods};
 }

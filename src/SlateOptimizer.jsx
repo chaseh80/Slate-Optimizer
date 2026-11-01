@@ -1,10 +1,11 @@
 import { useState, useMemo, useCallback, useRef } from "react";
 import {
   ROWS, COLS, VALID, VALID_SET, TOTAL,
-  PIECE_SIZE, PIECE_MAX, NETHER, COLORS, PIECE_LABELS, PIECE_DESC,
+  PIECE_SIZE, PIECE_MAX, NETHER, NETHER_1X1, COLORS, PIECE_LABELS, PIECE_DESC, PIECE_DESC_1X1,
   NETHER_MODS, EMPTY_MODS, DEFAULT_PEDIGREE_VALUE, MAX_PEDIGREE_VALUE,
   DEFAULT_NORMAL_VALUE, MIN_NORMAL_VALUE, MAX_NORMAL_VALUE,
-  DEFAULT_CONTAM_VALUE, MAX_CONTAM_VALUE, CONTAM_PCT, BANISH_MIN, modValueTable, analyzeSolution,
+  DEFAULT_NETHER_VALUE, MAX_NETHER_VALUE, DEFAULT_NODE_VALS, NETHER_FULL_SHAPES,
+  CONTAM_PCT, BANISH_MIN, modValueTable, analyzeSolution,
 } from "./solver.js";
 
 /* Rotate a cell 90° clockwise k times on the (4-fold symmetric) board. */
@@ -56,7 +57,10 @@ export default function SlateOptimizer(){
   const [pedigreeVal, setPedigreeVal] = useState(DEFAULT_PEDIGREE_VALUE);
   const [requirePedigree, setRequirePedigree] = useState(false);
   const [requireNether, setRequireNether] = useState(false);
-  const [contamWorth, setContamWorth] = useState(DEFAULT_CONTAM_VALUE);
+  const [netherVal, setNetherVal] = useState(DEFAULT_NETHER_VALUE); // 1×1's single mod
+  const [nodeVals, setNodeVals] = useState(()=>structuredClone(DEFAULT_NODE_VALS)); // full size: one per cell
+  const [nodeEditOpen, setNodeEditOpen] = useState(null); // which full-size Nether King's mod editor is open
+  const [netherSmall, setNetherSmall] = useState({judgement:false, contamination:false, banishment:false}); // true = 1×1
   const [normalVal, setNormalVal] = useState(DEFAULT_NORMAL_VALUE);
   const [rotation, setRotation] = useState(0); // quarter-turns clockwise applied to the displayed layout
   const [modOpen, setModOpen] = useState(null); // which nether cat's modifier panel is open
@@ -78,10 +82,27 @@ export default function SlateOptimizer(){
     setResult(null);
   },[]);
 
-  const changeContamWorth = useCallback((v)=>{
-    setContamWorth(Math.max(0, Math.min(MAX_CONTAM_VALUE, v)));
+  const changeNetherVal = useCallback((v)=>{
+    setNetherVal(Math.max(0, Math.min(MAX_NETHER_VALUE, v)));
     setResult(null);
   },[]);
+
+  const changeNodeVal = useCallback((cat, k, v)=>{
+    setNodeVals(p=>{
+      const vals = [...p[cat]];
+      vals[k] = Math.max(0, Math.min(MAX_NETHER_VALUE, v));
+      return {...p, [cat]:vals};
+    });
+    setResult(null);
+  },[]);
+
+  const toggleNetherSize = useCallback((cat)=>{
+    setNetherSmall(p=>({...p, [cat]:!p[cat]}));
+    setResult(null);
+  },[]);
+
+  // Cells a slate type takes in the current inventory (Nether Kings depend on the size switch).
+  const sizeOf = useCallback(cat=>netherSmall[cat] ? 1 : PIECE_SIZE[cat], [netherSmall]);
 
   const changeNormalVal = useCallback((v)=>{
     setNormalVal(Math.max(MIN_NORMAL_VALUE, Math.min(MAX_NORMAL_VALUE, v)));
@@ -98,7 +119,7 @@ export default function SlateOptimizer(){
     setResult(null);
   },[]);
 
-  const totalArea = useMemo(()=>INV_ORDER.reduce((s,c)=>s+counts[c]*PIECE_SIZE[c],0), [counts]);
+  const totalArea = useMemo(()=>INV_ORDER.reduce((s,c)=>s+counts[c]*sizeOf(c),0), [counts,sizeOf]);
 
   const setCount = useCallback((cat,v)=>{
     const val = Math.max(0, Math.min(PIECE_MAX[cat], v));
@@ -135,8 +156,11 @@ export default function SlateOptimizer(){
         setResult(e.data.result); setSolving(false); setProgress(null);
       }
     };
-    w.postMessage({counts, mods, pedigreeVal, normalVal, contamWorth, requirePedigree, requireNether, maxIters:BUDGETS[budgetIdx].v});
-  },[counts,mods,pedigreeVal,normalVal,contamWorth,requirePedigree,requireNether,totalArea,solving,budgetIdx]);
+    // The solver treats 1×1 Nether Kings as their own slate types.
+    const solveCounts = {...counts};
+    for(const v of NETHER) if(netherSmall[v]){ solveCounts[NETHER_1X1[v]] = counts[v]; solveCounts[v] = 0; }
+    w.postMessage({counts:solveCounts, mods, pedigreeVal, normalVal, netherVal, nodeVals, requirePedigree, requireNether, maxIters:BUDGETS[budgetIdx].v});
+  },[counts,netherSmall,mods,pedigreeVal,normalVal,netherVal,nodeVals,requirePedigree,requireNether,totalArea,solving,budgetIdx]);
 
   const handleCancel = useCallback(()=>{
     if(workerRef.current){ workerRef.current.terminate(); workerRef.current = null; }
@@ -161,7 +185,8 @@ export default function SlateOptimizer(){
     }));
   },[result,rotation]);
 
-  const analysis = useMemo(()=>analyzeSolution(shownSolution, mods, {pedigreeVal, normalVal, contamWorth}), [shownSolution,mods,pedigreeVal,normalVal,contamWorth]);
+  const analysis = useMemo(()=>analyzeSolution(shownSolution, mods, {pedigreeVal, normalVal, netherVal, nodeVals}),
+    [shownSolution,mods,pedigreeVal,normalVal,netherVal,nodeVals]);
 
   // Build display grid from solution
   const display = useMemo(()=>{
@@ -187,7 +212,7 @@ export default function SlateOptimizer(){
   },[shownSolution]);
 
   const netherOthers = INV_ORDER.filter(c=>c!=="banishment").reduce((s,c)=>s+counts[c],0);
-  const banishWarn = counts.banishment>0 && netherOthers<2*BANISH_MIN;
+  const banishWarn = counts.banishment>0 && !netherSmall.banishment && netherOthers<2*BANISH_MIN;
 
   // Tooltip content for the hovered cell
   const hoverInfo = useMemo(()=>{
@@ -196,8 +221,10 @@ export default function SlateOptimizer(){
     const pidH = display.cellPieceId[k];
     if(pidH!==undefined){
       const p = shownSolution[pidH];
+      const m = analysis.cellMods[k];
+      const modLine = m && `This cell: mod ${m.n} of 3${m.anchor?" (◈ anchor)":""}, worth ${m.value}`;
       return {pid:pidH, title:PIECE_LABELS[p.cat], color:COLORS[p.cat],
-        lines:[analysis.pieceNotes[pidH], ...(analysis.pieceTags[pidH]||[])].filter(Boolean)};
+        lines:[modLine, analysis.pieceNotes[pidH], ...(analysis.pieceTags[pidH]||[])].filter(Boolean)};
     }
     if(analysis.gapAll.has(k))
       return {pid:null, title:"Judgement buff line", color:COLORS.judgement,
@@ -236,7 +263,9 @@ export default function SlateOptimizer(){
             {col.cats.map(cat=>renderCard(cat, counts, setCount, mods, setModOpen,
               {pedigreeVal, changePedigreeVal, requirePedigree, toggleRequirePedigree,
                requireNether, toggleRequireNether,
-               contamWorth, changeContamWorth, normalVal, changeNormalVal}))}
+               netherVal, changeNetherVal, netherSmall, toggleNetherSize, sizeOf,
+               nodeVals, openNodeEditor:setNodeEditOpen,
+               normalVal, changeNormalVal}))}
           </div>
         ))}
       </div>
@@ -379,6 +408,12 @@ export default function SlateOptimizer(){
                       pointerEvents:"none",
                     }}>✦</span>
                   )}
+                  {analysis.cellMods[k] && (
+                    <span style={{
+                      position:"absolute", bottom:2, left:4, fontSize:11, fontWeight:700,
+                      color:"#fff", textShadow:"0 0 3px rgba(0,0,0,0.9)", pointerEvents:"none",
+                    }}>{analysis.cellMods[k].anchor?"◈ ":""}{analysis.cellMods[k].value}</span>
+                  )}
                 </div>
               );
             })
@@ -436,6 +471,44 @@ export default function SlateOptimizer(){
         </div>
       )}
 
+      {/* ── Full-size Nether King per-mod value editor ── */}
+      {nodeEditOpen && (
+        <div onClick={()=>setNodeEditOpen(null)} style={{
+          position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", zIndex:100,
+          display:"flex", alignItems:"center", justifyContent:"center", padding:20,
+        }}>
+          <div onClick={e=>e.stopPropagation()} style={{
+            background:"#141c27", border:"1px solid #4c3a6e", borderRadius:12,
+            padding:"16px 20px", width:440, maxWidth:"92vw", maxHeight:"85vh",
+            overflowY:"auto", boxSizing:"border-box",
+            display:"flex", flexDirection:"column", alignItems:"center", gap:10,
+          }}>
+            <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", alignSelf:"stretch"}}>
+              <div style={{display:"flex", alignItems:"center", gap:8}}>
+                <div style={{width:12, height:12, borderRadius:3, background:COLORS[nodeEditOpen]}}/>
+                <span style={{fontSize:13, fontWeight:700, color:"#e2e8f0"}}>
+                  {PIECE_LABELS[nodeEditOpen].split(": ")[1]} — Mod values
+                </span>
+              </div>
+              <Btn small onClick={()=>setNodeEditOpen(null)}>✕</Btn>
+            </div>
+            <div style={{fontSize:10, color:"#8b80a8", lineHeight:1.5}}>
+              Each square holds its own mod. Set what each one is worth: Sparks and Prairie copy the
+              square they touch. The result board shows these values on the piece so you can line it up in-game.
+              {nodeEditOpen==="banishment" && " Drawn as it sits on an outer edge, with the ◈ anchor at the tip."}
+              {nodeEditOpen==="judgement" && " Dashed squares are its buff lines."}
+            </div>
+            <NodeValueEditor cat={nodeEditOpen} vals={nodeVals[nodeEditOpen]}
+              onChange={(k,v)=>changeNodeVal(nodeEditOpen, k, v)}/>
+            <div style={{fontSize:11, color:"#94a3b8"}}>
+              Total: <b style={{color:"#e2e8f0"}}>{nodeVals[nodeEditOpen].reduce((s,v)=>s+v,0)}</b> mods
+              {nodeEditOpen==="contamination" &&
+                ` · projects ${fmtNum(nodeVals.contamination.reduce((s,v)=>s+v,0)*CONTAM_PCT)} per touching slate (${Math.round(CONTAM_PCT*100)}%)`}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Nether King modifier panel ── */}
       {modOpen && NETHER_MODS[modOpen] && (
         <div onClick={()=>setModOpen(null)} style={{
@@ -483,13 +556,20 @@ export default function SlateOptimizer(){
 function renderCard(cat, counts, setCount, mods, openMods, extras){
   const {pedigreeVal, changePedigreeVal, requirePedigree, toggleRequirePedigree,
          requireNether, toggleRequireNether,
-         contamWorth, changeContamWorth, normalVal, changeNormalVal} = extras;
+         netherVal, changeNetherVal, netherSmall, toggleNetherSize, sizeOf,
+         nodeVals, openNodeEditor,
+         normalVal, changeNormalVal} = extras;
+  const isNether = NETHER.includes(cat);
+  const small = isNether && netherSmall[cat];
   const netherRequiredHere = requireNether && counts[cat]>0;
   // Inside the Nether section the header already says "Nether King's Divinity".
-  const label = NETHER.includes(cat) ? PIECE_LABELS[cat].split(": ")[1] : PIECE_LABELS[cat];
-  const modList = NETHER_MODS[cat];
+  const label = isNether ? PIECE_LABELS[cat].split(": ")[1] : PIECE_LABELS[cat];
+  // Talent nodes only act through the Authority Effect, which a 1×1 doesn't have.
+  const modList = small ? null : NETHER_MODS[cat];
   const activeMods = modList ? modList.filter(m=>mods[m.id]).length : 0;
-  const intrinsicMods = modValueTable(pedigreeVal, normalVal)[cat];
+  const intrinsicMods = modValueTable(pedigreeVal, normalVal, netherVal, nodeVals)[cat];
+  const size = sizeOf(cat);
+  const desc = small ? PIECE_DESC_1X1[cat] : PIECE_DESC[cat];
   return(
     <div key={cat} style={{
       display:"flex", alignItems:"center", gap:8,
@@ -501,9 +581,9 @@ function renderCard(cat, counts, setCount, mods, openMods, extras){
       <div style={{flex:1, minWidth:0}}>
         <div style={{fontSize:11, color:"#94a3b8"}}>{label}</div>
         <div style={{fontSize:10, color:"#475569"}}>
-          {PIECE_SIZE[cat]} cell{PIECE_SIZE[cat]===1?"":"s"} · max {PIECE_MAX[cat]}
-          {cat!=="pedigree" && cat!=="normal" && intrinsicMods>0 ? ` · ${intrinsicMods} mods` : ""}
-          {PIECE_DESC[cat] ? ` · ${PIECE_DESC[cat]}` : ""}
+          {size} cell{size===1?"":"s"} · max {PIECE_MAX[cat]}
+          {cat!=="pedigree" && cat!=="normal" && !isNether && intrinsicMods>0 ? ` · ${intrinsicMods} mods` : ""}
+          {desc ? ` · ${desc}` : ""}
         </div>
         {cat==="normal" && (
           <div style={{display:"flex", alignItems:"center", gap:6, marginTop:4}}>
@@ -522,19 +602,31 @@ function renderCard(cat, counts, setCount, mods, openMods, extras){
             <RequirePill on={requirePedigree} onClick={toggleRequirePedigree}/>
           </div>
         )}
-        {NETHER.includes(cat) && (
-          <div style={{marginTop:4}}>
-            <RequirePill on={netherRequiredHere} onClick={()=>toggleRequireNether(cat, netherRequiredHere)}/>
-          </div>
-        )}
-        {cat==="contamination" && (
-          <div style={{display:"flex", alignItems:"center", gap:6, marginTop:4}}>
-            <span style={{fontSize:10, color:"#64748b"}}>Talent value:</span>
-            <Btn small onClick={()=>changeContamWorth(contamWorth-1)} disabled={contamWorth<=0}>−</Btn>
-            <span style={{fontSize:12, fontWeight:700, color:COLORS.contamination, minWidth:16, textAlign:"center"}}>{contamWorth}</span>
-            <Btn small onClick={()=>changeContamWorth(contamWorth+1)} disabled={contamWorth>=MAX_CONTAM_VALUE}>+</Btn>
-            <span style={{fontSize:9, color:"#475569"}}>(projected at {Math.round(CONTAM_PCT*100)}% per slate)</span>
-          </div>
+        {isNether && (
+          <>
+            <div style={{display:"flex", alignItems:"center", gap:6, marginTop:4, flexWrap:"wrap"}}>
+              <SizeSwitch small={small} onClick={()=>toggleNetherSize(cat)}/>
+              <RequirePill on={netherRequiredHere} onClick={()=>toggleRequireNether(cat, netherRequiredHere)}/>
+            </div>
+            {small ? (
+              <div style={{display:"flex", alignItems:"center", gap:6, marginTop:4, flexWrap:"wrap"}}>
+                <span style={{fontSize:10, color:"#64748b"}} title="What this 1×1's mod is worth, including when Sparks or Prairie copy it">Mod value:</span>
+                <Btn small onClick={()=>changeNetherVal(netherVal-1)} disabled={netherVal<=0}>−</Btn>
+                <span style={{fontSize:12, fontWeight:700, color:COLORS[cat], minWidth:16, textAlign:"center"}}>{netherVal}</span>
+                <Btn small onClick={()=>changeNetherVal(netherVal+1)} disabled={netherVal>=MAX_NETHER_VALUE}>+</Btn>
+              </div>
+            ) : (
+              <div style={{display:"flex", alignItems:"center", gap:6, marginTop:4, flexWrap:"wrap"}}>
+                <span style={{fontSize:10, color:"#64748b"}}>Mod values:</span>
+                <span style={{fontSize:12, fontWeight:700, color:COLORS[cat]}}>{nodeVals[cat].join(" · ")}</span>
+                <button onClick={()=>openNodeEditor(cat)} title="Set the value of each square's mod" style={{
+                  padding:"4px 10px", fontSize:10, fontWeight:700, fontFamily:"inherit",
+                  background:"#1e293b", color:"#94a3b8", border:"1px solid #334155",
+                  borderRadius:12, cursor:"pointer", lineHeight:1,
+                }}>Edit</button>
+              </div>
+            )}
+          </>
         )}
       </div>
       {modList && (
@@ -565,6 +657,60 @@ function renderCard(cat, counts, setCount, mods, openMods, extras){
         <Btn small onClick={()=>setCount(cat,counts[cat]+1)} disabled={counts[cat]>=PIECE_MAX[cat]}>+</Btn>
       </div>
     </div>
+  );
+}
+
+function NodeValueEditor({cat, vals, onChange}){
+  const shape = NETHER_FULL_SHAPES[cat];
+  const gaps = shape.gaps || [];
+  const all = shape.cells.concat(gaps);
+  const rows = Math.max(...all.map(p=>p[0]))+1, cols = Math.max(...all.map(p=>p[1]))+1;
+  const S = 76;
+  const at = (r,c)=>shape.cells.find(([a,b])=>a===r&&b===c);
+  return(
+    <div style={{display:"grid", gridTemplateColumns:`repeat(${cols},${S}px)`, gridTemplateRows:`repeat(${rows},${S}px)`, gap:4}}>
+      {Array.from({length:rows*cols},(_,i)=>{
+        const r = Math.floor(i/cols), c = i%cols, cell = at(r,c);
+        if(!cell){
+          const isGap = gaps.some(([a,b])=>a===r&&b===c);
+          return <div key={i} style={{borderRadius:6, boxSizing:"border-box",
+            border:isGap?`2px dashed ${COLORS.judgement}66`:"none",
+            display:"flex", alignItems:"center", justifyContent:"center", color:`${COLORS.judgement}88`, fontSize:12}}>
+            {isGap?"✦":""}</div>;
+        }
+        const k = cell[2], anchor = cat==="banishment" && k===2;
+        return(
+          <div key={i} style={{
+            borderRadius:6, boxSizing:"border-box", background:`${COLORS[cat]}33`,
+            border:`2px solid ${COLORS[cat]}`, display:"flex", flexDirection:"column",
+            alignItems:"center", justifyContent:"center", gap:2,
+          }}>
+            <span style={{fontSize:9, color:"#c8b8ec"}}>Mod {k+1}{anchor?" ◈":""}</span>
+            <span style={{fontSize:18, fontWeight:700, color:"#fff", lineHeight:1}}>{vals[k]}</span>
+            <div style={{display:"flex", gap:3}}>
+              <Btn small onClick={()=>onChange(k, vals[k]-1)} disabled={vals[k]<=0}>−</Btn>
+              <Btn small onClick={()=>onChange(k, vals[k]+1)} disabled={vals[k]>=MAX_NETHER_VALUE}>+</Btn>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function SizeSwitch({small, onClick}){
+  const seg = active=>({
+    padding:"4px 8px", fontSize:10, fontWeight:700, lineHeight:1,
+    background:active?"#3b2a5e":"transparent", color:active?"#c4a7f7":"#64748b",
+  });
+  return(
+    <button onClick={onClick} title="Switch between the full-size and 1×1 version" style={{
+      display:"flex", padding:0, fontFamily:"inherit", cursor:"pointer", overflow:"hidden",
+      background:"#1e293b", border:"1px solid #334155", borderRadius:12,
+    }}>
+      <span style={seg(!small)}>Full size</span>
+      <span style={seg(small)}>1×1</span>
+    </button>
   );
 }
 

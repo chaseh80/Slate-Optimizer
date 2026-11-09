@@ -23,7 +23,7 @@ const BASE_SHAPES = {
   // Judgement: three 1x1s at corners of an L — X··X across, two gaps down, X.
   // The 4 gap cells between them are the "lines" that buff whatever covers them.
   judgement:     { cells: [[0,0,0],[0,3,1],[3,3,2]], gaps: [[0,1],[0,2],[1,3],[2,3]] },
-  contamination: { cells: [[0,0,0],[0,1,1],[0,2,2]] },
+  contamination: { cells: [[0,0,0],[1,0,1],[2,0,2]] }, // vertical; mod 2 is the ◈ start square
   banishment:    { cells: [[0,0,0],[1,1,1],[2,2,2]] }, // three 1x1s stacked diagonally; mod 3 is the ◈ anchor
   // 1x1 Nether Kings: used for their implicits only — no Authority Effect.
   judgement1:    { cells: [[0,0]] },
@@ -33,6 +33,8 @@ const BASE_SHAPES = {
 // Full-size Nether King shapes, for drawing the per-mod value editor.
 export const NETHER_FULL_SHAPES = Object.fromEntries(
   ["judgement","contamination","banishment"].map(c=>[c, BASE_SHAPES[c]]));
+// The ◈ square of a full-size piece (by mod index), where the game anchors it.
+export const isAnchor = (cat, n)=>(cat==="banishment" && n===2) || (cat==="contamination" && n===1);
 const BANISH_SLOT = [[0,3],[1,4],[2,5]]; // top-right outer edge
 // Fixed slots the game allows for each 1x1 Nether King.
 const SLOTS_1X1 = {
@@ -75,8 +77,8 @@ export const PIECE_DESC = {
   pedigree:"Cannot be copied from",
   spark:"Copies the last talent of one adjacent slate (+1, or a Nether King mod's value)",
   prairie:"Copies the last talent of each adjacent slate (+1 each, or a Nether King mod's value; max 4)",
-  judgement:"Buffs slates on its lines: +40% effect, talent nodes add more (⚙)",
-  contamination:"Projects its talents at 12% strength into each touching slate (⚙)",
+  judgement:"Sits on 3 of the 4 Judgement slots. Buffs slates on its lines: +40% effect, talent nodes add more (⚙)",
+  contamination:"Vertical, centred on a non-edge cell. Projects its talents at 12% strength into each touching slate (⚙)",
   banishment:"Locked to an outer diagonal edge. Buff at 3+ adj & 3+ non-adj: +1 mod per non-adjacent slate",
 };
 export const PIECE_DESC_1X1 = {
@@ -269,10 +271,27 @@ function computeAllPlacements(){
   // Its orientation on the edge is fixed too: the ◈ anchor (mod 3) sits at the tip.
   const slotKey = JSON.stringify(BANISH_SLOT);
   plc.banishment = plc.banishment.filter(p=>JSON.stringify(p.cells)===slotKey && JSON.stringify(p.nodes)==="[0,1,2]");
-  plc.banishment[0].canonical = true;
-  for(const [cat, slots] of Object.entries(SLOTS_1X1)){
-    const ok = new Set(slots.map(([r,c])=>r*COLS+c));
-    plc[cat] = plc[cat].filter(p=>ok.has(p.cells[0][0]*COLS+p.cells[0][1]));
+  const inSlots = slots=>{ const ok = new Set(slots.map(([r,c])=>r*COLS+c)); return ([r,c])=>ok.has(r*COLS+c); };
+  // Each mod is fixed to its square on the piece, so a piece is never mirrored:
+  // its mods keep the layout drawn in BASE_SHAPES (cells sorted by row read as
+  // mods 1, 2, 3 for every placement kept below).
+  const asDrawn = p=>JSON.stringify(p.nodes)==="[0,1,2]";
+  // Full-size Judgement sits on 3 of the 4 Judgement slots, one placement per
+  // rotation; by the same symmetry as Banishment, only the as-drawn one (corner,
+  // mod 2, at the top-right slot) is tried.
+  const judgeSlot = inSlots(SLOTS_1X1.judgement1);
+  plc.judgement = plc.judgement.filter(p=>p.cells.every(judgeSlot) && asDrawn(p) &&
+    JSON.stringify(p.cells[1])==="[1,4]");
+  // Full-size Contamination never turns: vertical, mod 1 on top, centred (mod 2,
+  // its ◈ start square) on a non-edge cell.
+  const contamCentre = inSlots(SLOTS_1X1.contamination1);
+  plc.contamination = plc.contamination.filter(p=>p.cells.every(([,c])=>c===p.cells[0][1]) &&
+    asDrawn(p) && contamCentre(p.cells[1]));
+  for(const [cat, slots] of Object.entries(SLOTS_1X1)) plc[cat] = plc[cat].filter(p=>inSlots(slots)(p.cells[0]));
+  // Filtering can drop the placement that was marked canonical for a cell set.
+  for(const cat of NETHER){
+    const seen = new Set();
+    for(const p of plc[cat]){ const k = JSON.stringify(p.cells); p.canonical = !seen.has(k); seen.add(k); }
   }
   return plc;
 }
@@ -566,21 +585,28 @@ export function solve(inputCounts, mods, opts = {}){
     occ[tr*COLS+tc] = 0; emptyCells++;
   }
 
-  if(rem.banishment>0){
-    // Banishment has a single fixed slot, so search with it pre-placed first;
-    // otherwise the budget is spent on Banishment-less layouts before the scan
-    // ever reaches its slot. Then fall back to layouts without it.
-    const pl = ALL_PLC.banishment[0];
-    occupy("banishment", pl, 0);
-    sparkBest.push(0);
-    coverage += pl.cells.length; emptyCells -= pl.cells.length; rem.banishment--;
-    banishIdx = 0; banishAdj = 0; banishNon = 0; netherPlaced++; intrinsic += modVal.banishment;
-    bt();
-    banishIdx = -1; netherPlaced--; intrinsic -= modVal.banishment;
-    placed.pop(); sparkBest.pop();
-    coverage -= pl.cells.length; emptyCells += pl.cells.length;
-    vacate(pl);
-    potential -= MAXB.banishment;
+  // Full-size Banishment and Judgement each have a single fixed slot, so search
+  // with them pre-placed first; otherwise the budget is spent on layouts without
+  // them before the scan ever reaches their slot. Then fall back to layouts without.
+  const rootCat = ["banishment","judgement"].find(c=>rem[c]>0);
+  if(rootCat){
+    for(const pl of ALL_PLC[rootCat]){
+      if(!pl.canonical && sameNodes[rootCat])continue;
+      occupy(rootCat, pl, 0);
+      sparkBest.push(0);
+      coverage += pl.cells.length; emptyCells -= pl.cells.length; rem[rootCat]--;
+      netherPlaced++; intrinsic += modVal[rootCat];
+      if(rootCat==="banishment"){ banishIdx = 0; banishAdj = 0; banishNon = 0; }
+      else judgeIdx = 0; // nothing is on its lines yet, so no buff to count
+      bt();
+      if(rootCat==="banishment") banishIdx = -1; else judgeIdx = -1;
+      netherPlaced--; intrinsic -= modVal[rootCat];
+      placed.pop(); sparkBest.pop();
+      coverage -= pl.cells.length; emptyCells += pl.cells.length; rem[rootCat]++;
+      vacate(pl);
+    }
+    rem[rootCat] = 0;
+    potential -= counts[rootCat]*MAXB[rootCat];
     if(!netherNeed) bt();
   }else{
     bt();
@@ -618,7 +644,7 @@ export function analyzeSolution(sol, mods, opts = {}){
     if(p.nodes && MULTI_NODE[p.cat]){
       const n = p.nodes[k];
       cv[key] = nodeVals[p.cat][n];
-      cellMods[key] = {n:n+1, value:cv[key], anchor:p.cat==="banishment" && n===2};
+      cellMods[key] = {n:n+1, value:cv[key], anchor:isAnchor(p.cat, n)};
     }else cv[key] = copyVal[p.cat];
   }));
   const neighborIds = (cells, self, dirs=DIRS)=>{

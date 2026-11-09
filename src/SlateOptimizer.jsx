@@ -4,7 +4,7 @@ import {
   PIECE_SIZE, PIECE_MAX, NETHER, NETHER_1X1, COLORS, PIECE_LABELS, PIECE_DESC, PIECE_DESC_1X1,
   NETHER_MODS, EMPTY_MODS, DEFAULT_PEDIGREE_VALUE, MAX_PEDIGREE_VALUE,
   DEFAULT_NORMAL_VALUE, MIN_NORMAL_VALUE, MAX_NORMAL_VALUE,
-  DEFAULT_NETHER_VALUE, MAX_NETHER_VALUE, DEFAULT_NODE_VALS, NETHER_FULL_SHAPES,
+  DEFAULT_NETHER_VALUE, MAX_NETHER_VALUE, DEFAULT_NODE_VALS, NETHER_FULL_SHAPES, isAnchor,
   CONTAM_PCT, BANISH_MIN, modValueTable, analyzeSolution,
 } from "./solver.js";
 
@@ -143,7 +143,7 @@ export default function SlateOptimizer(){
 
   const handleSolve = useCallback(()=>{
     if(totalArea===0 || solving)return;
-    setSolving(true); setResult(null); setProgress(null); progressRef.current = null;
+    setSolving(true); setResult(null); setProgress(null); setRotation(0); progressRef.current = null;
     if(!workerRef.current){
       workerRef.current = new Worker(new URL("./solverWorker.js", import.meta.url), {type:"module"});
     }
@@ -172,6 +172,10 @@ export default function SlateOptimizer(){
     }
     setSolving(false); setProgress(null);
   },[]);
+
+  // A full-size Contamination never turns in-game (vertical, mod 1 on top), so
+  // a layout containing it can't be rotated at all.
+  const canRotate = !result?.solution?.some(p=>p.cat==="contamination");
 
   // The solution as displayed: rotated by the user's chosen quarter-turns.
   const shownSolution = useMemo(()=>{
@@ -444,13 +448,18 @@ export default function SlateOptimizer(){
       </div>
 
       {/* ── Rotate layout (Nether King slots are fixed in-game; rotating the whole board is fine) ── */}
-      {result?.solution && result.solution.length>0 && (
+      {result?.solution && result.solution.length>0 && canRotate && (
         <div style={{display:"flex", alignItems:"center", gap:8}}>
           <Btn onClick={()=>setRotation(r=>r-1)}>⟲ Rotate left</Btn>
           <span style={{fontSize:10, color:"#64748b", minWidth:36, textAlign:"center"}}>
             {(((rotation%4)+4)%4)*90}°
           </span>
           <Btn onClick={()=>setRotation(r=>r+1)}>Rotate right ⟳</Btn>
+        </div>
+      )}
+      {result?.solution && result.solution.length>0 && !canRotate && (
+        <div style={{fontSize:10, color:"#64748b"}}>
+          Contamination never turns in-game (mod 1 always on top), so this layout can't be rotated.
         </div>
       )}
 
@@ -497,6 +506,8 @@ export default function SlateOptimizer(){
               square they touch. The result board shows these values on the piece so you can line it up in-game.
               {nodeEditOpen==="banishment" && " Drawn as it sits on an outer edge, with the ◈ anchor at the tip."}
               {nodeEditOpen==="judgement" && " Dashed squares are its buff lines."}
+              {nodeEditOpen==="contamination" && " Drawn as it sits: the ◈ start square in the middle, growing one up and one down. It never turns, so mod 1 is always on top."}
+              {nodeEditOpen==="judgement" && " It only rotates onto its other slots, never mirrors, so each mod stays where it's drawn relative to the others."}
             </div>
             <NodeValueEditor cat={nodeEditOpen} vals={nodeVals[nodeEditOpen]}
               onChange={(k,v)=>changeNodeVal(nodeEditOpen, k, v)}/>
@@ -678,7 +689,7 @@ function NodeValueEditor({cat, vals, onChange}){
             display:"flex", alignItems:"center", justifyContent:"center", color:`${COLORS.judgement}88`, fontSize:12}}>
             {isGap?"✦":""}</div>;
         }
-        const k = cell[2], anchor = cat==="banishment" && k===2;
+        const k = cell[2], anchor = isAnchor(cat, k);
         return(
           <div key={i} style={{
             borderRadius:6, boxSizing:"border-box", background:`${COLORS[cat]}33`,
